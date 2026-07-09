@@ -31,8 +31,8 @@ python3 <skill-path>/scripts/video_parser.py "<用户提供的URL>" \
 - `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
 
 脚本会自动创建 `<workspace>/videos/<视频ID>/` 目录，并输出：
-- `<视频ID>.mp4` — 视频文件
-- `<视频ID>.json` — 元信息（作者、标题、点赞、评论等）
+- `视频文件.mp4` — 视频文件
+- `元信息.json` — 元信息（作者、标题、点赞、评论等）
 
 ### Step 2: 生成视频内容描述
 

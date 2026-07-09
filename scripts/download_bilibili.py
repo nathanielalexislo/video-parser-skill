@@ -279,9 +279,9 @@ def print_info(info: dict) -> None:
     print(f"      弹幕    = {info['danmaku_count']:,}")
 
 
-def save_meta(info: dict, save_path: str) -> None:
-    """将元信息保存为同名 JSON 文件"""
-    meta_path = os.path.splitext(save_path)[0] + '.json'
+def save_meta(info: dict, save_dir: str) -> None:
+    """将元信息保存为 元信息.json"""
+    meta_path = os.path.join(save_dir, '元信息.json')
     meta = {k: v for k, v in info.items() if k != 'title_clean'}
     meta['source_url'] = f"https://www.bilibili.com/video/{info['bvid']}"
     with open(meta_path, 'w', encoding='utf-8') as f:
@@ -308,13 +308,13 @@ def main():
     info = extract_video_info(bvid, session)
     print_info(info)
 
-    save_path = os.path.join(args.save_dir, f"{info['title_clean']}.mp4")
+    save_path = os.path.join(args.save_dir, '视频文件.mp4')
     os.makedirs(args.save_dir, exist_ok=True)
     print(f"[3/4] 下载视频 -> {save_path}")
     download_video(bvid, info['cid'], save_path, session, args.cookies)
 
     print(f"[4/4] 保存元信息 ...")
-    save_meta(info, save_path)
+    save_meta(info, args.save_dir)
     print("全部完成！")
 
 

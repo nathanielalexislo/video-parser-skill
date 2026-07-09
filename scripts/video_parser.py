@@ -50,14 +50,14 @@ def run_download(platform: str, url: str, scripts_dir: str,
         info = mod.extract_video_info(video_id, session)
         save_dir = os.path.join(output_dir, video_id)
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{info['title']}.mp4")
+        save_path = os.path.join(save_dir, '视频文件.mp4')
         mod.download_video(info['video_url'], save_path, session, cookie_file)
-        mod.save_meta(info, save_path)
+        mod.save_meta(info, save_dir)
         return {
             'video_id': video_id,
             'save_dir': save_dir,
             'mp4_path': save_path,
-            'json_path': os.path.splitext(save_path)[0] + '.json',
+            'json_path': os.path.join(save_dir, '元信息.json'),
             'title': info['title'],
         }
 
@@ -68,14 +68,14 @@ def run_download(platform: str, url: str, scripts_dir: str,
         info = mod.extract_video_info(video_id, session)
         save_dir = os.path.join(output_dir, video_id)
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{info['title']}.mp4")
+        save_path = os.path.join(save_dir, '视频文件.mp4')
         mod.download_video(info['video_url'], save_path, session, cookie_file)
-        mod.save_meta(info, save_path)
+        mod.save_meta(info, save_dir)
         return {
             'video_id': video_id,
             'save_dir': save_dir,
             'mp4_path': save_path,
-            'json_path': os.path.splitext(save_path)[0] + '.json',
+            'json_path': os.path.join(save_dir, '元信息.json'),
             'title': info['title'],
         }
 
@@ -86,14 +86,14 @@ def run_download(platform: str, url: str, scripts_dir: str,
         info = mod.extract_video_info(bvid, session)
         save_dir = os.path.join(output_dir, bvid)
         os.makedirs(save_dir, exist_ok=True)
-        save_path = os.path.join(save_dir, f"{info['title_clean']}.mp4")
+        save_path = os.path.join(save_dir, '视频文件.mp4')
         mod.download_video(bvid, info['cid'], save_path, session, cookie_file)
-        mod.save_meta(info, save_path)
+        mod.save_meta(info, save_dir)
         return {
             'video_id': bvid,
             'save_dir': save_dir,
             'mp4_path': save_path,
-            'json_path': os.path.splitext(save_path)[0] + '.json',
+            'json_path': os.path.join(save_dir, '元信息.json'),
             'title': info['title'],
         }
 
