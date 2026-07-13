@@ -44,6 +44,8 @@ def resolve_bvid(url: str, session: requests.Session) -> str:
 
     if 'b23.tv' in url:
         resp = session.get(url, allow_redirects=True)
+        if resp.status_code >= 400:
+            raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
         url = resp.url
 
     m = re.search(r'(BV[a-zA-Z0-9]+)', url)
@@ -59,8 +61,12 @@ def extract_video_info(bvid: str, session: requests.Session) -> dict:
     resp.raise_for_status()
     data = resp.json()
 
-    if data.get('code') != 0:
-        raise RuntimeError(f"B站 API 错误: {data.get('message', 'unknown')}")
+    code = data.get('code')
+    if code != 0:
+        message = data.get('message', 'unknown')
+        if code == -404 or '不存在' in message or '不可见' in message or '木有' in message:
+            raise RuntimeError(f"B站视频不存在或不可见（code={code}）：{message}")
+        raise RuntimeError(f"B站 API 错误（code={code}）：{message}")
 
     v = data['data']
     stat = v.get('stat', {})

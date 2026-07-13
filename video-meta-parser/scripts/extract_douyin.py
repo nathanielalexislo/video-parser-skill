@@ -33,12 +33,35 @@ def build_session(cookie_file: str | None = None) -> requests.Session:
     return session
 
 
+def _is_error_page(html: str) -> str:
+    """检查页面是否为视频不存在/已失效等错误页，返回错误原因；正常则返回空字符串"""
+    markers = [
+        (r'视频不存在', '视频不存在'),
+        (r'作品不存在', '作品不存在'),
+        (r'视频已失效', '视频已失效'),
+        (r'视频已删除', '视频已删除'),
+        (r'视频不见了', '视频不存在'),
+        (r'已失效', '链接已失效'),
+        (r'404', '页面不存在（404）'),
+        (r'内容无法查看', '内容无法查看'),
+    ]
+    for pattern, reason in markers:
+        if re.search(pattern, html):
+            return reason
+    return ''
+
+
 def resolve_video_id(url: str, session: requests.Session) -> str:
     """从各种抖音链接格式中提取视频 ID（aweme_id）"""
     if re.fullmatch(r'\d{10,}', url):
         return url
 
     resp = session.get(url, allow_redirects=True)
+    if resp.status_code >= 400:
+        raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
+    error_reason = _is_error_page(resp.text)
+    if error_reason:
+        raise RuntimeError(f"短链指向的视频已失效：{error_reason}")
     final_url = resp.url
 
     m = re.search(r'/(?:video|note)/(\d+)', final_url)
@@ -81,6 +104,10 @@ def extract_video_info(video_id: str, session: requests.Session) -> dict:
     resp = session.get(page_url, allow_redirects=True)
     resp.raise_for_status()
     html = resp.text
+
+    error_reason = _is_error_page(html)
+    if error_reason:
+        raise RuntimeError(f"视频不存在或已失效：{error_reason}")
 
     def _first(pattern: str, default: str = '') -> str:
         m = re.search(pattern, html)
