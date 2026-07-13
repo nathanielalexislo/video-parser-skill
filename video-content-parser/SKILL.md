@@ -1,38 +1,44 @@
 ---
-name: video-parser
+name: video-content-parser
 description: >
-  短视频内容解析技能，支持抖音/快手/哔哩哔哩。输入视频短链，自动下载视频、提取元信息、
-  通过关键帧分析+Whisper语音转录生成视频内容描述。
-  当用户提到 解析视频、下载视频、分析视频内容、视频摘要，
-  或者粘贴了抖音(v.douyin.com)、快手(v.kuaishou.com)、B站(b23.tv/bilibili.com)链接时，
-  务必使用本技能。即使用户只是发了一个链接没说话，只要链接来自这三个平台，也应该触发。
+  视频下载与内容描述生成技能，支持抖音/快手/哔哩哔哩。输入 video-meta-parser 产出的
+  id 与 source_url，自动下载视频，再通过关键帧分析 + Whisper 语音转录生成视频内容描述。
+  当用户提到 下载视频、分析视频内容、视频摘要、生成视频内容描述，
+  或已经通过 video-meta-parser 拿到 id/source_url 需要进一步处理时，务必使用本技能。
+  若用户只给了视频短链还没有 id/source_url，应先用 video-meta-parser 解析元信息。
 ---
 
-# 短视频内容解析
+# 视频下载与内容描述生成
 
-支持抖音、快手、哔哩哔哩三个平台的短视频链接，一键完成：下载视频 → 提取元信息 → 生成内容描述。
+支持抖音、快手、哔哩哔哩三个平台。以 `video-meta-parser` 产出的 `id` 和 `source_url`
+作为输入，完成：下载视频 → 生成内容描述。
+
+> 前置：本技能依赖 `video-meta-parser` 先解析出 `id` 与 `source_url`。
+> `id` 决定下载到哪个目录（`<output-dir>/<id>/`）、`source_url` 决定平台与下载对象。
+> 若用户只提供了原始短链，请先运行 `video-meta-parser`。
 
 ## 工作流程
 
-收到用户的视频链接后，按以下步骤执行：
+### Step 1: 下载视频
 
-### Step 1: 识别平台 & 下载视频
-
-运行主控脚本，它会自动识别平台、下载视频、提取元信息：
+运行下载主控脚本，输入第一个技能产出的 `id` 与 `source_url`：
 
 ```bash
-python3 <skill-path>/scripts/video_parser.py "<用户提供的URL>" \
+python3 <skill-path>/scripts/download_video.py \
+  --id "<video-meta-parser 产出的 id>" \
+  --source-url "<video-meta-parser 产出的 source_url>" \
   --output-dir <workspace>/videos \
   --cookies-dir <workspace>
 ```
 
 - `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
 - `<workspace>` 是用户当前工作区路径
+- `--output-dir` 应与 `video-meta-parser` 使用的相同，这样视频会下载到 `<output-dir>/<id>/`，与 `元信息.json` 同目录
 - `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
 
-脚本会自动创建 `<workspace>/videos/<视频ID>/` 目录，并输出：
+脚本会输出并在 `<output-dir>/<id>/` 下生成：
 - `视频文件.mp4` — 视频文件
-- `元信息.json` — 元信息（作者、标题、点赞、评论等）
+- 末尾打印 `MP4_PATH=` / `SAVE_DIR=`，供下一步使用
 
 ### Step 2: 生成视频内容描述
 
@@ -52,14 +58,14 @@ python3 <skill-path>/scripts/analyze_video.py "<视频文件路径>" \
 4. 由你逐帧阅读截图（用 Read 工具读取 jpg），结合音频转录文本，生成完整的视频内容描述
 
 **关于逐帧分析的说明：**
-分析脚本会输出帧文件列表和音频转录文本。你需要用 Read 工具逐个读取帧截图来理解画面内容，然后将视觉信息和音频文本整合为一份结构化的描述文档。
+分析脚本会输出帧文件列表和音频转录文本。你需要用 Read 工具逐个读取帧截图来理解画面内容，然后将视觉信息和音频文本整合为一份结构化的描述文档。可读取同目录下 `元信息.json` 补充作者/标题等信息。
 
 描述文档格式参考（保存为 `视频内容描述.txt`）：
 
 ```
 视频内容详细描述
 ==================
-视频来源: <URL>
+视频来源: <source_url>
 作者: <作者名>
 时长: <时长> | 分辨率: <WxH> | 格式: MP4
 标题: <标题>
@@ -90,17 +96,16 @@ python3 <skill-path>/scripts/analyze_video.py "<视频文件路径>" \
 ### Step 3: 汇报结果
 
 完成后向用户报告：
-- 文件保存位置
-- 视频基本信息（作者、标题、互动数据表格）
+- 文件保存位置（`<id>/` 目录下的视频与描述文件）
 - 视频内容概要（一段话）
 
 ## 平台适配说明
 
-| 平台 | URL 特征 | 下载策略 | cookie 文件 |
+| 平台 | source_url 特征 | 下载策略 | cookie 文件 |
 |------|----------|----------|-------------|
-| 快手 | `v.kuaishou.com` | 移动端页面提取 mp4 直链 → yt-dlp → requests | `cookies-kuaishou.txt` |
-| 抖音 | `v.douyin.com` | 分享页 `_ROUTER_DATA` → playwm→play 去水印 → yt-dlp → requests | `cookies-douyin.txt` |
-| B站 | `b23.tv` / `bilibili.com` | B站 API → yt-dlp（DASH自动合并）→ API+ffmpeg | `cookies-bilibili.txt` |
+| 快手 | `kuaishou.com/short-video` | 移动端页面提取 mp4 直链 → yt-dlp → requests | `cookies-kuaishou.txt` |
+| 抖音 | `douyin.com/video` | 分享页 `_ROUTER_DATA` → playwm→play 去水印 → yt-dlp → requests | `cookies-douyin.txt` |
+| B站 | `bilibili.com/video` | B站 API → yt-dlp（DASH自动合并）→ API+ffmpeg | `cookies-bilibili.txt` |
 
 ## 依赖
 
@@ -114,4 +119,4 @@ python3 <skill-path>/scripts/analyze_video.py "<视频文件路径>" \
 - 如果 cookie 文件不存在，脚本会跳过 cookie 加载，以匿名方式访问（可能受限）
 - 如果 yt-dlp 失败，自动回退到平台专用 API 或 requests 直接下载
 - 如果 faster-whisper 模型未下载，设置 `HF_ENDPOINT=https://hf-mirror.com` 使用镜像
-- 如果 ffmpeg 不可用，跳过帧提取和音频转录，仅输出视频文件和元信息
+- 如果 ffmpeg 不可用，跳过帧提取和音频转录，仅输出视频文件

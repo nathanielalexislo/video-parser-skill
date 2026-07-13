@@ -1,0 +1,7 @@
+# Python 字节码缓存
+__pycache__/
+*.py[cod]
+*$py.class
+
+# 运行产物
+videos/
