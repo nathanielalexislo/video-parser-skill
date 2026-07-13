@@ -43,8 +43,8 @@ def find_cookie(cookies_dir: str, platform: str) -> str | None:
 
 
 def load_module(scripts_dir: str, name: str):
-    """动态加载同目录下的平台脚本模块"""
-    path = os.path.join(scripts_dir, f"download_{name}.py")
+    """动态加载同目录下的平台元信息提取脚本模块"""
+    path = os.path.join(scripts_dir, f"extract_{name}.py")
     spec = importlib.util.spec_from_file_location(f"dl_{name}", path)
     mod = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(mod)
