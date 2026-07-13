@@ -37,6 +37,17 @@ def build_session(cookie_file: str | None = None) -> requests.Session:
     return session
 
 
+def _is_error_page(html: str) -> str:
+    """检查页面是否为视频不存在/已失效等错误页，返回错误原因；正常则返回空字符串"""
+    markers = [
+        (r'视频不见了', '视频不见了'),
+    ]
+    for pattern, reason in markers:
+        if re.search(pattern, html):
+            return reason
+    return ''
+
+
 def resolve_bvid(url: str, session: requests.Session) -> str:
     """从各种 B站链接格式中提取 BVID"""
     if re.fullmatch(r'BV[a-zA-Z0-9]+', url):
@@ -46,6 +57,9 @@ def resolve_bvid(url: str, session: requests.Session) -> str:
         resp = session.get(url, allow_redirects=True)
         if resp.status_code >= 400:
             raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
+        error_reason = _is_error_page(resp.text)
+        if error_reason:
+            raise RuntimeError(f"短链指向的视频已失效：{error_reason}")
         url = resp.url
 
     m = re.search(r'(BV[a-zA-Z0-9]+)', url)
