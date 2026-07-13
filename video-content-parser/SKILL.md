@@ -33,12 +33,13 @@ python3 <skill-path>/scripts/download_video.py \
 
 - `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
 - `<workspace>` 是用户当前工作区路径
-- `--output-dir` 应与 `video-meta-parser` 使用的相同，这样视频会下载到 `<output-dir>/<id>/`，与 `元信息.json` 同目录
+- `--output-dir` 应与 `video-meta-parser` 使用的相同，这样视频会下载到 `<output-dir>/<id>/`
 - `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
 
 脚本会输出并在 `<output-dir>/<id>/` 下生成：
 - `视频文件.mp4` — 视频文件
-- 末尾打印 `MP4_PATH=` / `SAVE_DIR=`，供下一步使用
+- `_download_result.json` — 含 `id`、`source_url`、`mp4_path`、`save_dir`
+- 末尾打印 `MP4_PATH=` / `SAVE_DIR=` / `RESULT_JSON=`，供下一步使用
 
 ### Step 2: 生成视频内容描述
 
@@ -58,7 +59,7 @@ python3 <skill-path>/scripts/analyze_video.py "<视频文件路径>" \
 4. 由你逐帧阅读截图（用 Read 工具读取 jpg），结合音频转录文本，生成完整的视频内容描述
 
 **关于逐帧分析的说明：**
-分析脚本会输出帧文件列表和音频转录文本。你需要用 Read 工具逐个读取帧截图来理解画面内容，然后将视觉信息和音频文本整合为一份结构化的描述文档。可读取同目录下 `元信息.json` 补充作者/标题等信息。
+分析脚本会输出帧文件列表和音频转录文本。你需要用 Read 工具逐个读取帧截图来理解画面内容，然后将视觉信息和音频文本整合为一份结构化的描述文档。描述中的 `视频来源` 取自 `download_video.py` 传入的 `source_url`（也记录在 `_download_result.json` 中），**不要读取 `元信息.json`**。
 
 描述文档格式参考（保存为 `视频内容描述.txt`）：
 
@@ -66,9 +67,7 @@ python3 <skill-path>/scripts/analyze_video.py "<视频文件路径>" \
 视频内容详细描述
 ==================
 视频来源: <source_url>
-作者: <作者名>
 时长: <时长> | 分辨率: <WxH> | 格式: MP4
-标题: <标题>
 
 【概述】
 <一段话概括视频内容>

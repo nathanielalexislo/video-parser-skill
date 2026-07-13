@@ -7,8 +7,7 @@
     python3 download_video.py --id <视频ID> --source-url <source_url> \
         --output-dir <workspace>/videos --cookies-dir <workspace>
 
-输出: <output_dir>/<id>/视频文件.mp4
-（与 video-meta-parser 产出的 <output_dir>/<id>/元信息.json 同目录）
+输出: <output_dir>/<id>/视频文件.mp4 + _download_result.json（含 source_url）
 """
 
 import argparse
@@ -43,9 +42,9 @@ def load_module(scripts_dir: str, name: str):
     return mod
 
 
-def run_download(platform: str, video_id: str, scripts_dir: str,
+def run_download(platform: str, video_id: str, source_url: str, scripts_dir: str,
                  output_dir: str, cookie_file: str | None) -> dict:
-    """按平台下载视频，返回 {video_id, save_dir, mp4_path}"""
+    """按平台下载视频，返回 {video_id, source_url, save_dir, mp4_path}"""
     save_dir = os.path.join(output_dir, video_id)
     os.makedirs(save_dir, exist_ok=True)
     save_path = os.path.join(save_dir, '视频文件.mp4')
@@ -71,7 +70,12 @@ def run_download(platform: str, video_id: str, scripts_dir: str,
     else:
         raise ValueError(f"未知平台: {platform}")
 
-    return {'video_id': video_id, 'save_dir': save_dir, 'mp4_path': save_path}
+    return {
+        'video_id': video_id,
+        'source_url': source_url,
+        'save_dir': save_dir,
+        'mp4_path': save_path,
+    }
 
 
 def main():
@@ -96,7 +100,7 @@ def main():
     else:
         print(f"Cookie: 未找到 cookies-{platform}.txt，将以匿名方式访问")
 
-    result = run_download(platform, args.id, scripts_dir,
+    result = run_download(platform, args.id, args.source_url, scripts_dir,
                           args.output_dir, cookie_file)
 
     print("\n=== 下载完成 ===")
