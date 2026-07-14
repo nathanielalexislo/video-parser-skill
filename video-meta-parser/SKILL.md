@@ -77,11 +77,21 @@ SUCCESS=false
 
 ## 汇报结果
 
-完成后向用户报告：
-- 元信息保存位置（`<id>/元信息.json`，仅在 ID 解析成功时创建）
+根据 `success` 字段和输出信息向用户报告：
+
+**成功时** (`success=true`)：
+- 元信息保存位置（`<id>/元信息.json`）
 - 视频基本信息（作者、标题、发布时间、播放/点赞/评论/分享数据表格）
 - 如需下载视频或生成内容描述，提示可用 `video-content-parser`，并把 `id` 与 `source_url` 传给它
-- 若 `success` 为 false，报告 `fail_reason` 中的错误信息
+
+**ID 解析成功但元信息获取失败时** (`success=false` 但输出了 `ID=`)：
+- 报告 `fail_reason` 中的错误原因
+- 说明已创建 `<id>/元信息.json`，其中包含视频 ID 和规范化长链接
+- 提示用户虽然元信息获取失败，但可以尝试用 `video-content-parser` 直接下载视频（传入 `id` 和 `source_url`）
+
+**ID 解析失败时** (`success=false` 且未输出 `ID=`)：
+- 报告 `fail_reason` 中的错误原因
+- 说明未创建任何文件，建议检查链接是否有效或尝试其他链接
 
 ## 平台适配说明
 
