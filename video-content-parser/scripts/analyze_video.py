@@ -8,7 +8,6 @@ import json
 import os
 import subprocess
 import sys
-import tempfile
 
 
 def get_video_info(video_path: str) -> dict:
@@ -98,9 +97,9 @@ print(json.dumps(output, ensure_ascii=False))
 
 
 def main():
-    parser = argparse.ArgumentParser(description='视频内容分析')
+    parser = argparse.ArgumentParser(description='视频分析素材准备')
     parser.add_argument('video', help='视频文件路径')
-    parser.add_argument('--output', required=True, help='描述文件输出路径')
+    parser.add_argument('--save-dir', required=True, help='视频保存目录（如 <workspace>/videos/<id>/）')
     parser.add_argument('--whisper-model', default='base', help='Whisper 模型名')
     parser.add_argument('--hf-endpoint', default='https://hf-mirror.com',
                         help='HuggingFace 镜像地址')
@@ -112,7 +111,9 @@ def main():
         print(f"错误: 视频文件不存在: {args.video}")
         sys.exit(1)
 
-    tmpdir = tempfile.mkdtemp(prefix='video_analysis_')
+    # 创建 _analysis 子目录
+    analysis_dir = os.path.join(args.save_dir, '_analysis')
+    os.makedirs(analysis_dir, exist_ok=True)
 
     # Step 1: 获取视频信息
     print("=== Step 1: 获取视频信息 ===")
@@ -120,18 +121,29 @@ def main():
     print(f"时长: {vinfo['duration']:.1f}s  分辨率: {vinfo['width']}x{vinfo['height']}  "
           f"编码: {vinfo['codec']}  帧率: {vinfo['fps']}")
 
-    # Step 2: 提取关键帧
+    # Step 2: 提取关键帧（带时间区间）
     print(f"\n=== Step 2: 提取关键帧 (每{args.frame_interval}s) ===")
-    frames = extract_frames(args.video, tmpdir, args.frame_interval)
+    frames_raw = extract_frames(args.video, analysis_dir, args.frame_interval)
+    # 为每个帧添加 start/end 时间
+    frames = []
+    for i, frame_path in enumerate(frames_raw):
+        start_time = i * args.frame_interval
+        end_time = start_time + args.frame_interval
+        frames.append({
+            'start': start_time,
+            'end': end_time,
+            'path': frame_path,
+        })
     print(f"提取了 {len(frames)} 帧:")
     for f in frames:
-        size_kb = os.path.getsize(f) / 1024
-        print(f"  {f}  ({size_kb:.0f} KB)")
+        size_kb = os.path.getsize(f['path']) / 1024
+        print(f"  [{f['start']}s - {f['end']}s] {f['path']}  ({size_kb:.0f} KB)")
 
     # Step 3: 提取音频
-    audio_path = os.path.join(tmpdir, 'audio.wav')
+    audio_path = os.path.join(analysis_dir, 'audio.wav')
     print(f"\n=== Step 3: 提取音频 ===")
-    if extract_audio(args.video, audio_path):
+    audio_extracted = extract_audio(args.video, audio_path)
+    if audio_extracted:
         audio_size_kb = os.path.getsize(audio_path) / 1024
         print(f"音频已提取: {audio_path}  ({audio_size_kb:.0f} KB)")
     else:
@@ -153,27 +165,23 @@ def main():
             for seg in transcription['segments']:
                 print(f"  [{seg['start']}s - {seg['end']}s] {seg['text']}")
 
-    # 输出分析结果 JSON（供 agent 读取后整合为最终描述）
+    # 输出分析结果 JSON
     analysis = {
         'video_info': vinfo,
         'frames': frames,
-        'audio_path': audio_path,
         'transcription': transcription,
-        'output_path': args.output,
-        'temp_dir': tmpdir,
     }
 
-    analysis_file = os.path.join(os.path.dirname(args.output), '_analysis.json')
+    analysis_file = os.path.join(analysis_dir, 'analysis.json')
     with open(analysis_file, 'w', encoding='utf-8') as f:
         json.dump(analysis, f, ensure_ascii=False, indent=2)
 
-    print(f"\n=== 分析完成 ===")
-    print(f"帧文件目录: {tmpdir}")
-    print(f"分析结果:   {analysis_file}")
-    print(f"描述输出:   {args.output}")
+    print(f"\n=== 分析素材准备完成 ===")
+    print(f"分析目录: {analysis_dir}")
+    print(f"分析结果: {analysis_file}")
     print(f"\n请用 Read 工具逐帧阅读以下截图，结合转录文本生成视频内容描述:")
-    for i, f in enumerate(frames):
-        print(f"  帧{i+1}: {f}")
+    for f in frames:
+        print(f"  [{f['start']}s - {f['end']}s] {f['path']}")
 
 
 if __name__ == '__main__':

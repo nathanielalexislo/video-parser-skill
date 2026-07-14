@@ -48,13 +48,13 @@ python3 <skill-path>/scripts/download_video.py \
 
 **下载失败时**，脚本会抛出异常，不创建 `视频文件.mp4` 和 `_download_result.json`，流程中止。
 
-### Step 2: 生成视频内容描述
+### Step 2: 准备分析素材
 
-视频下载完成后，运行内容分析脚本（使用 Step 1 输出的 `MP4_PATH` 和 `SAVE_DIR`）：
+视频下载完成后，运行分析脚本（使用 Step 1 输出的 `MP4_PATH` 和 `SAVE_DIR`）：
 
 ```bash
 python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
-  --output "<SAVE_DIR>/视频内容描述.txt" \
+  --save-dir "<SAVE_DIR>" \
   --whisper-model base \
   --hf-endpoint https://hf-mirror.com
 ```
@@ -65,16 +65,47 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 
 该脚本会：
 1. 用 ffprobe 获取视频时长、分辨率等基本信息
-2. 用 ffmpeg 每 N 秒提取一帧关键帧截图（默认每 2 秒，保存到临时目录）
+2. 用 ffmpeg 每 N 秒提取一帧关键帧截图（默认每 2 秒）
 3. 用 ffmpeg 提取音频为 16kHz 单声道 WAV 格式
 4. 用 faster-whisper 转录音频为带时间戳的文本
-5. 在 `<SAVE_DIR>/` 下生成 `_analysis.json`，包含视频信息、帧文件列表、音频路径、转录结果
-6. 末尾打印帧文件列表和分析结果路径，提示你逐帧阅读截图
+5. 在 `<SAVE_DIR>/` 下创建 `_analysis/` 子目录，将关键帧截图、音频文件、`analysis.json` 保存其中
 
-**关于逐帧分析的说明：**
-你需要用 Read 工具逐个读取帧截图（路径在 `_analysis.json` 的 `frames` 字段中，或从脚本输出中复制），理解画面内容，然后将视觉信息和音频转录文本（在 `_analysis.json` 的 `transcription` 字段中）整合为一份结构化的描述文档。描述中的 `视频来源` 取自 `_download_result.json` 中的 `source_url`，**不要读取 `元信息.json`**。
+`analysis.json` 结构：
 
-描述文档格式参考（保存为 `视频内容描述.txt`）：
+```json
+{
+  "video_info": {
+    "duration": 120.5,
+    "width": 1920,
+    "height": 1080,
+    ...
+  },
+  "frames": [
+    {"start": 0, "end": 2, "path": "<SAVE_DIR>/_analysis/frame_001.jpg"},
+    {"start": 2, "end": 4, "path": "<SAVE_DIR>/_analysis/frame_002.jpg"},
+    ...
+  ],
+  "transcription": {
+    "language": "zh",
+    "language_prob": 0.99,
+    "segments": [
+      {"start": 0.0, "end": 3.5, "text": "大家好"},
+      {"start": 3.5, "end": 6.2, "text": "今天我们来讲讲"},
+      ...
+    ]
+  }
+}
+```
+
+### Step 3: 生成视频内容描述
+
+基于 Step 2 准备的分析素材，按固定结构生成视频内容描述：
+
+1. 用 Read 工具逐个读取 `_analysis/` 目录下的帧截图（路径在 `analysis.json` 的 `frames` 字段中）
+2. 为每个关键帧生成描述，包括时间段和画面内容，形成**关键帧转录**
+3. 保留 `analysis.json` 中的 `transcription` 数据作为**音频转录**
+4. 基于关键帧转录 + 音频转录的内容（忽略时间区间），生成一段**概述**
+5. 按以下结构整合为最终描述文档，保存为 `<SAVE_DIR>/视频内容描述.txt`：
 
 ```
 视频内容详细描述
@@ -83,17 +114,16 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 时长: <时长> | 分辨率: <WxH> | 格式: MP4
 
 【概述】
-<一段话概括视频内容>
+<一段话概括视频内容，基于关键帧转录 + 音频转录总结，可忽略时间区间>
 
-【音频转录（faster-whisper base模型）】
-  [<时间>] <转录文本>
-  ...
-
-【逐段描述】
-▸ <时间段> — <段落标题>
+【关键帧转录】
+▸ [<start>s - <end>s]
   画面：<画面描述>
   文字叠加：<画面上的文字>
-  旁白：<对应时间段的旁白内容>
+  ...
+
+【音频转录（faster-whisper base模型）】
+  [<start>s - <end>s] <转录文本>
   ...
 
 【音效/音频分析】
@@ -105,11 +135,10 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
   - <要点列表>
 ```
 
-### Step 3: 汇报结果
-
-完成后向用户报告：
-- 文件保存位置（`<id>/` 目录下的视频与描述文件）
-- 视频内容概要（一段话）
+**注意：**
+- `视频来源` 取自 `_download_result.json` 中的 `source_url`，**不要读取 `元信息.json`**
+- 关键帧转录的时间段与 `analysis.json` 中 `frames` 的 `start`/`end` 对应
+- 音频转录的时间段与 `analysis.json` 中 `transcription.segments` 的 `start`/`end` 对应
 
 ## 平台适配说明
 
@@ -131,5 +160,5 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 - 如果 cookie 文件不存在，脚本会跳过 cookie 加载，以匿名方式访问（可能受限）
 - 如果 yt-dlp 下载失败，自动回退到平台专用 API 或 requests 直接下载
 - 如果所有下载方式均失败，`download_video.py` 会抛出异常，流程中止
-- 如果 ffmpeg 不可用，`analyze_video.py` 会在帧提取或音频提取步骤失败，脚本仍会继续执行，但相关功能会被跳过
-- 如果 faster-whisper 转录失败，脚本会打印错误信息，`transcription` 字段为 null，但仍会生成 `_analysis.json` 和提示你逐帧阅读
+- 如果 ffmpeg 不可用，`analyze_video.py` 会在帧提取或音频提取步骤失败，但脚本仍会继续执行，`analysis.json` 中对应字段为空
+- 如果 faster-whisper 转录失败，脚本会打印错误信息，`transcription` 字段为 null，但仍会生成 `analysis.json`
