@@ -61,17 +61,24 @@ SOURCE_URL=<source_url>
 META_JSON=<元信息.json 路径>
 ```
 
-**失败时**，脚本会以 `failed_<url_hash>` 为目录名，并打印：
+**ID 解析成功但元信息获取失败时**，仍以 `<id>` 为目录名创建 `元信息.json`，其中 `source_url` 和 `id` 会被填充，`success` 为 false，`fail_reason` 记录错误原因：
 
 ```
 SUCCESS=false
+ID=<视频ID>
 META_JSON=<元信息.json 路径>
+```
+
+**ID 解析失败时**（如短链跳转被拦截、无法提取 ID），**不会创建任何目录或文件**，只打印错误信息：
+
+```
+SUCCESS=false
 ```
 
 ## 汇报结果
 
 完成后向用户报告：
-- 元信息保存位置（`<id>/元信息.json` 或 `failed_<hash>/元信息.json`）
+- 元信息保存位置（`<id>/元信息.json`，仅在 ID 解析成功时创建）
 - 视频基本信息（作者、标题、发布时间、播放/点赞/评论/分享数据表格）
 - 如需下载视频或生成内容描述，提示可用 `video-content-parser`，并把 `id` 与 `source_url` 传给它
 - 若 `success` 为 false，报告 `fail_reason` 中的错误信息
@@ -91,5 +98,6 @@ META_JSON=<元信息.json 路径>
 ## 错误处理
 
 - 如果 cookie 文件不存在，脚本会跳过 cookie 加载，以匿名方式访问（可能受限）
-- 如果链接已失效或需要登录，脚本会将错误信息写入 `fail_reason` 字段，`success` 设为 false
-- 失败时其他字段保持完整但为空（`id`、`title`、`source_url` 等为空字符串，数值字段为 0）
+- 如果 ID 解析成功但元信息获取失败（如视频已删除、需要登录），`id` 和 `source_url` 仍会被填充，其他字段为空，`success` 为 false
+- 如果 ID 解析失败（如短链跳转被 412 拦截、无法从 URL 提取 ID），不会创建任何文件，只打印错误信息
+- 如果平台无法识别，直接抛出异常，不创建任何文件
