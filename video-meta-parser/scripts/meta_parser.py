@@ -192,41 +192,21 @@ def main():
     try:
         meta = parse_meta(platform, args.url, scripts_dir, cookie_file)
     except Exception as e:
-        # 解析过程中出现异常（平台识别失败等）
-        meta = to_failed_meta(str(e))
-        # 用 URL hash 作为目录名
-        import hashlib
-        dir_name = hashlib.md5(args.url.encode()).hexdigest()[:12]
-        save_dir = os.path.join(args.output_dir, f"failed_{dir_name}")
-        os.makedirs(save_dir, exist_ok=True)
-        meta_path = os.path.join(save_dir, '元信息.json')
-        with open(meta_path, 'w', encoding='utf-8') as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        # 解析过程中出现异常（平台识别失败等），直接打印错误，不创建任何文件
         print(f"\n=== 解析失败 ===")
-        print(f"失败原因: {meta['fail_reason']}")
-        print(f"元信息:   {meta_path}")
+        print(f"失败原因: {str(e)}")
         print(f"\nSUCCESS=false")
-        print(f"META_JSON={meta_path}")
         return
 
     # 解析完成（可能成功或失败）
     if meta['success']:
         # 成功时以 id 为父目录
         save_dir = os.path.join(args.output_dir, meta['id'])
-    else:
-        # 失败时：如果有 id（resolve 成功），用 id 作为目录名；否则用 hash
-        if meta['id']:
-            save_dir = os.path.join(args.output_dir, meta['id'])
-        else:
-            import hashlib
-            dir_name = hashlib.md5(args.url.encode()).hexdigest()[:12]
-            save_dir = os.path.join(args.output_dir, f"failed_{dir_name}")
-    os.makedirs(save_dir, exist_ok=True)
-    meta_path = os.path.join(save_dir, '元信息.json')
-    with open(meta_path, 'w', encoding='utf-8') as f:
-        json.dump(meta, f, ensure_ascii=False, indent=2)
+        os.makedirs(save_dir, exist_ok=True)
+        meta_path = os.path.join(save_dir, '元信息.json')
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    if meta['success']:
         print("\n=== 解析完成 ===")
         print(f"视频ID:   {meta['id']}")
         print(f"标题:     {meta['title']}")
@@ -239,17 +219,29 @@ def main():
         print(f"\nSUCCESS=true")
         print(f"ID={meta['id']}")
         print(f"SOURCE_URL={meta['source_url']}")
+        print(f"META_JSON={meta_path}")
     else:
-        print(f"\n=== 解析失败 ===")
-        print(f"失败原因: {meta['fail_reason']}")
+        # 失败时：如果有 id（resolve 成功），创建目录和 JSON；否则只打印错误
         if meta['id']:
+            save_dir = os.path.join(args.output_dir, meta['id'])
+            os.makedirs(save_dir, exist_ok=True)
+            meta_path = os.path.join(save_dir, '元信息.json')
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+
+            print(f"\n=== 解析失败 ===")
+            print(f"失败原因: {meta['fail_reason']}")
             print(f"视频ID:   {meta['id']}")
             print(f"SOURCE_URL: {meta['source_url']}")
-        print(f"元信息:   {meta_path}")
-        print(f"\nSUCCESS=false")
-        if meta['id']:
+            print(f"元信息:   {meta_path}")
+            print(f"\nSUCCESS=false")
             print(f"ID={meta['id']}")
-        print(f"META_JSON={meta_path}")
+            print(f"META_JSON={meta_path}")
+        else:
+            # resolve 失败，没有 id，不创建任何文件
+            print(f"\n=== 解析失败 ===")
+            print(f"失败原因: {meta['fail_reason']}")
+            print(f"\nSUCCESS=false")
         return
 
 
