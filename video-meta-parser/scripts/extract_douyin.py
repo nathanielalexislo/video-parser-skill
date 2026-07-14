@@ -52,9 +52,6 @@ def resolve_video_id(url: str, session: requests.Session) -> str:
     resp = session.get(url, allow_redirects=True)
     if resp.status_code >= 400:
         raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
-    error_reason = _is_error_page(resp.text)
-    if error_reason:
-        raise RuntimeError(f"短链指向的视频已失效：{error_reason}")
     final_url = resp.url
 
     m = re.search(r'/(?:video|note)/(\d+)', final_url)

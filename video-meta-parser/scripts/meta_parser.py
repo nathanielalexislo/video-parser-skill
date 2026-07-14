@@ -106,10 +106,12 @@ def to_unified_meta(platform: str, info: dict) -> dict:
     raise ValueError(f"未知平台: {platform}")
 
 
-def to_failed_meta(fail_reason: str) -> dict:
-    """生成失败时的元信息结构，所有字段保持完整但为空"""
+def to_failed_meta(fail_reason: str, source_url: str = '', video_id: str = '') -> dict:
+    """生成失败时的元信息结构，所有字段保持完整但为空。
+    如果 resolve 阶段成功拿到了 video_id，可以填充 id 和 source_url。
+    """
     return {
-        'id':            '',
+        'id':            video_id,
         'title':         '',
         'desc':          '',
         'publish_time':  '',
@@ -118,7 +120,7 @@ def to_failed_meta(fail_reason: str) -> dict:
         'comment_count': 0,
         'share_count':   0,
         'author':        '',
-        'source_url':    '',
+        'source_url':    source_url,
         'success':       False,
         'fail_reason':   fail_reason,
     }
@@ -126,24 +128,44 @@ def to_failed_meta(fail_reason: str) -> dict:
 
 def parse_meta(platform: str, url: str, scripts_dir: str,
                cookie_file: str | None) -> dict:
-    """调用对应平台脚本解析元信息，返回统一结构 dict"""
-    if platform == 'kuaishou':
-        mod = load_module(scripts_dir, 'kuaishou')
-        session = mod.build_session(cookie_file)
-        pid = mod.resolve_photo_id(url, session)
-        info = mod.extract_video_info(pid, session)
-    elif platform == 'douyin':
-        mod = load_module(scripts_dir, 'douyin')
-        session = mod.build_session(cookie_file)
-        vid = mod.resolve_video_id(url, session)
-        info = mod.extract_video_info(vid, session)
-    elif platform == 'bilibili':
-        mod = load_module(scripts_dir, 'bilibili')
-        session = mod.build_session(cookie_file)
-        bvid = mod.resolve_bvid(url, session)
-        info = mod.extract_video_info(bvid, session)
-    else:
-        raise ValueError(f"未知平台: {platform}")
+    """调用对应平台脚本解析元信息，返回统一结构 dict。
+    如果 resolve 成功但 extract 失败，source_url 仍会填充。
+    """
+    video_id = None
+    try:
+        if platform == 'kuaishou':
+            mod = load_module(scripts_dir, 'kuaishou')
+            session = mod.build_session(cookie_file)
+            video_id = mod.resolve_photo_id(url, session)
+            info = mod.extract_video_info(video_id, session)
+        elif platform == 'douyin':
+            mod = load_module(scripts_dir, 'douyin')
+            session = mod.build_session(cookie_file)
+            video_id = mod.resolve_video_id(url, session)
+            info = mod.extract_video_info(video_id, session)
+        elif platform == 'bilibili':
+            mod = load_module(scripts_dir, 'bilibili')
+            session = mod.build_session(cookie_file)
+            video_id = mod.resolve_bvid(url, session)
+            info = mod.extract_video_info(video_id, session)
+        else:
+            raise ValueError(f"未知平台: {platform}")
+    except Exception as e:
+        # resolve 或 extract 阶段失败
+        fail_reason = str(e)
+        # 如果 resolve 成功拿到了 video_id，仍然可以填充 source_url
+        if video_id:
+            if platform == 'kuaishou':
+                source_url = f"https://www.kuaishou.com/short-video/{video_id}"
+            elif platform == 'douyin':
+                source_url = f"https://www.douyin.com/video/{video_id}"
+            elif platform == 'bilibili':
+                source_url = f"https://www.bilibili.com/video/{video_id}"
+            else:
+                source_url = ''
+            return to_failed_meta(fail_reason, source_url=source_url, video_id=video_id)
+        else:
+            return to_failed_meta(fail_reason)
     return to_unified_meta(platform, info)
 
 
@@ -169,9 +191,10 @@ def main():
 
     try:
         meta = parse_meta(platform, args.url, scripts_dir, cookie_file)
-    except (RuntimeError, ValueError, Exception) as e:
+    except Exception as e:
+        # 解析过程中出现异常（平台识别失败等）
         meta = to_failed_meta(str(e))
-        # 失败时用 URL hash 作为目录名，避免空目录
+        # 用 URL hash 作为目录名
         import hashlib
         dir_name = hashlib.md5(args.url.encode()).hexdigest()[:12]
         save_dir = os.path.join(args.output_dir, f"failed_{dir_name}")
@@ -186,28 +209,48 @@ def main():
         print(f"META_JSON={meta_path}")
         return
 
-    # 成功时以 id 为父目录存储元信息
-    save_dir = os.path.join(args.output_dir, meta['id'])
+    # 解析完成（可能成功或失败）
+    if meta['success']:
+        # 成功时以 id 为父目录
+        save_dir = os.path.join(args.output_dir, meta['id'])
+    else:
+        # 失败时：如果有 id（resolve 成功），用 id 作为目录名；否则用 hash
+        if meta['id']:
+            save_dir = os.path.join(args.output_dir, meta['id'])
+        else:
+            import hashlib
+            dir_name = hashlib.md5(args.url.encode()).hexdigest()[:12]
+            save_dir = os.path.join(args.output_dir, f"failed_{dir_name}")
     os.makedirs(save_dir, exist_ok=True)
     meta_path = os.path.join(save_dir, '元信息.json')
     with open(meta_path, 'w', encoding='utf-8') as f:
         json.dump(meta, f, ensure_ascii=False, indent=2)
 
-    print("\n=== 解析完成 ===")
-    print(f"视频ID:   {meta['id']}")
-    print(f"标题:     {meta['title']}")
-    print(f"作者:     {meta['author']}")
-    print(f"发布时间: {meta['publish_time']}")
-    print(f"播放/点赞/评论/分享: "
-          f"{meta['play_count']:,} / {meta['like_count']:,} / "
-          f"{meta['comment_count']:,} / {meta['share_count']:,}")
-    print(f"元信息:   {meta_path}")
-
-    # 供 video-content-parser 串联使用
-    print(f"\nSUCCESS=true")
-    print(f"ID={meta['id']}")
-    print(f"SOURCE_URL={meta['source_url']}")
-    print(f"META_JSON={meta_path}")
+    if meta['success']:
+        print("\n=== 解析完成 ===")
+        print(f"视频ID:   {meta['id']}")
+        print(f"标题:     {meta['title']}")
+        print(f"作者:     {meta['author']}")
+        print(f"发布时间: {meta['publish_time']}")
+        print(f"播放/点赞/评论/分享: "
+              f"{meta['play_count']:,} / {meta['like_count']:,} / "
+              f"{meta['comment_count']:,} / {meta['share_count']:,}")
+        print(f"元信息:   {meta_path}")
+        print(f"\nSUCCESS=true")
+        print(f"ID={meta['id']}")
+        print(f"SOURCE_URL={meta['source_url']}")
+    else:
+        print(f"\n=== 解析失败 ===")
+        print(f"失败原因: {meta['fail_reason']}")
+        if meta['id']:
+            print(f"视频ID:   {meta['id']}")
+            print(f"SOURCE_URL: {meta['source_url']}")
+        print(f"元信息:   {meta_path}")
+        print(f"\nSUCCESS=false")
+        if meta['id']:
+            print(f"ID={meta['id']}")
+        print(f"META_JSON={meta_path}")
+        return
 
 
 if __name__ == '__main__':
