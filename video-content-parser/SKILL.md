@@ -126,9 +126,9 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 ```
 
 **注意：**
-- `视频来源` 取自 `_download_result.json` 中的 `source_url`，**不要读取 `元信息.json`**
 - 关键帧转录的时间段与 `analysis.json` 中 `frames` 的 `start`/`end` 对应
 - 音频转录的时间段与 `analysis.json` 中 `transcription.segments` 的 `start`/`end` 对应
+- **不要读取 `元信息.json`**，所有需要的信息都已包含在 `analysis.json` 中
 
 ## 平台适配说明
 
@@ -150,5 +150,8 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 - 如果 cookie 文件不存在，脚本会跳过 cookie 加载，以匿名方式访问（可能受限）
 - 如果 yt-dlp 下载失败，自动回退到平台专用 API 或 requests 直接下载
 - 如果所有下载方式均失败，`download_video.py` 会抛出异常，流程中止
-- 如果 ffmpeg 不可用，`analyze_video.py` 会在帧提取或音频提取步骤失败，但脚本仍会继续执行，`analysis.json` 中对应字段为空
+- 如果视频文件损坏或无法读取，`analyze_video.py` 会在第一步获取视频信息时失败并抛出异常，流程中止
+- 如果 ffmpeg 不可用或执行失败，`analyze_video.py` 会在帧提取或音频提取步骤失败，但脚本仍会继续执行：
+  - 帧提取失败时，`frames` 字段为空列表
+  - 音频提取失败时，不会生成 `audio.wav`，Whisper 转录会被跳过，`transcription` 字段为 null
 - 如果 faster-whisper 转录失败，脚本会打印错误信息，`transcription` 字段为 null，但仍会生成 `analysis.json`

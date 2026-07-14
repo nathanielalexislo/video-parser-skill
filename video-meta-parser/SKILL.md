@@ -68,6 +68,7 @@ META_JSON=<元信息.json 路径>
 ```
 SUCCESS=false
 ID=<视频ID>
+SOURCE_URL=<source_url>
 META_JSON=<元信息.json 路径>
 ```
 
@@ -116,3 +117,4 @@ SUCCESS=false
 - 如果 ID 解析成功但元信息获取失败（如视频已删除、需要登录），`id` 和 `source_url` 仍会被填充，其他字段为空，`success` 为 false
 - 如果 ID 解析失败（如短链跳转被 412 拦截、无法从 URL 提取 ID），不会创建任何文件，只打印错误信息
 - 如果平台无法识别，直接抛出异常，不创建任何文件
+- 如果遇到网络异常（连接超时、DNS 解析失败等），脚本会抛出异常并打印错误信息，流程中止
