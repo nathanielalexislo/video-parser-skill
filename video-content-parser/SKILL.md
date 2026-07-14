@@ -110,8 +110,6 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 ```
 视频内容详细描述
 ==================
-视频来源: <source_url>
-时长: <时长> | 分辨率: <WxH> | 格式: MP4
 
 【概述】
 <一段话概括视频内容，基于关键帧转录 + 音频转录总结，可忽略时间区间>
@@ -122,17 +120,9 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
   文字叠加：<画面上的文字>
   ...
 
-【音频转录（faster-whisper base模型）】
+【音频转录】
   [<start>s - <end>s] <转录文本>
   ...
-
-【音效/音频分析】
-  - 语音类型：<描述>
-  - 背景音乐：<描述>
-  - 转录工具：faster-whisper base模型
-
-【关键信息提取】
-  - <要点列表>
 ```
 
 **注意：**
