@@ -17,6 +17,8 @@
     share_count   分享数
     author        作者名称
     source_url    视频规范化长链接
+    success       是否成功（true/false）
+    fail_reason   失败原因（成功时为空字符串）
 """
 
 import argparse
@@ -66,6 +68,8 @@ def to_unified_meta(platform: str, info: dict) -> dict:
             'share_count':   info.get('share_count', 0),
             'author':        info.get('author', ''),
             'source_url':    f"https://www.douyin.com/video/{vid}",
+            'success':       True,
+            'fail_reason':   '',
         }
     if platform == 'kuaishou':
         vid = info['photo_id']
@@ -80,6 +84,8 @@ def to_unified_meta(platform: str, info: dict) -> dict:
             'share_count':   info.get('share_count', 0),
             'author':        info.get('author', ''),
             'source_url':    f"https://www.kuaishou.com/short-video/{vid}",
+            'success':       True,
+            'fail_reason':   '',
         }
     if platform == 'bilibili':
         vid = info['bvid']
@@ -94,8 +100,28 @@ def to_unified_meta(platform: str, info: dict) -> dict:
             'share_count':   info.get('share_count', 0),
             'author':        info.get('author', ''),
             'source_url':    f"https://www.bilibili.com/video/{vid}",
+            'success':       True,
+            'fail_reason':   '',
         }
     raise ValueError(f"未知平台: {platform}")
+
+
+def to_failed_meta(fail_reason: str) -> dict:
+    """生成失败时的元信息结构，所有字段保持完整但为空"""
+    return {
+        'id':            '',
+        'title':         '',
+        'desc':          '',
+        'publish_time':  '',
+        'play_count':    0,
+        'like_count':    0,
+        'comment_count': 0,
+        'share_count':   0,
+        'author':        '',
+        'source_url':    '',
+        'success':       False,
+        'fail_reason':   fail_reason,
+    }
 
 
 def parse_meta(platform: str, url: str, scripts_dir: str,
@@ -141,9 +167,26 @@ def main():
     else:
         print(f"Cookie: 未找到 cookies-{platform}.txt，将以匿名方式访问")
 
-    meta = parse_meta(platform, args.url, scripts_dir, cookie_file)
+    try:
+        meta = parse_meta(platform, args.url, scripts_dir, cookie_file)
+    except (RuntimeError, ValueError, Exception) as e:
+        meta = to_failed_meta(str(e))
+        # 失败时用 URL hash 作为目录名，避免空目录
+        import hashlib
+        dir_name = hashlib.md5(args.url.encode()).hexdigest()[:12]
+        save_dir = os.path.join(args.output_dir, f"failed_{dir_name}")
+        os.makedirs(save_dir, exist_ok=True)
+        meta_path = os.path.join(save_dir, '元信息.json')
+        with open(meta_path, 'w', encoding='utf-8') as f:
+            json.dump(meta, f, ensure_ascii=False, indent=2)
+        print(f"\n=== 解析失败 ===")
+        print(f"失败原因: {meta['fail_reason']}")
+        print(f"元信息:   {meta_path}")
+        print(f"\nSUCCESS=false")
+        print(f"META_JSON={meta_path}")
+        return
 
-    # 以 id 为父目录存储元信息
+    # 成功时以 id 为父目录存储元信息
     save_dir = os.path.join(args.output_dir, meta['id'])
     os.makedirs(save_dir, exist_ok=True)
     meta_path = os.path.join(save_dir, '元信息.json')
@@ -161,7 +204,8 @@ def main():
     print(f"元信息:   {meta_path}")
 
     # 供 video-content-parser 串联使用
-    print(f"\nID={meta['id']}")
+    print(f"\nSUCCESS=true")
+    print(f"ID={meta['id']}")
     print(f"SOURCE_URL={meta['source_url']}")
     print(f"META_JSON={meta_path}")
 
