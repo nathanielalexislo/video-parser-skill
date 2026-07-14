@@ -48,11 +48,11 @@ python3 <skill-path>/scripts/meta_parser.py "<用户提供的URL>" \
 - `<workspace>` 是用户当前工作区路径
 - `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
 
-脚本会**以 `id` 为父目录**创建 `<workspace>/videos/<id>/`，并写入：
+脚本执行后会有三种情况：
 
-- `元信息.json` — 上表 12 个字段的统一元信息
+**情况一：完全成功**
 
-脚本执行完会在末尾打印，便于串联到 `video-content-parser`：
+以 `<id>` 为父目录创建 `<workspace>/videos/<id>/元信息.json`，末尾打印：
 
 ```
 SUCCESS=true
@@ -61,7 +61,9 @@ SOURCE_URL=<source_url>
 META_JSON=<元信息.json 路径>
 ```
 
-**ID 解析成功但元信息获取失败时**，仍以 `<id>` 为目录名创建 `元信息.json`，其中 `source_url` 和 `id` 会被填充，`success` 为 false，`fail_reason` 记录错误原因：
+**情况二：ID 解析成功，但元信息获取失败**
+
+仍以 `<id>` 为父目录创建 `<workspace>/videos/<id>/元信息.json`，其中 `id` 和 `source_url` 会被填充，其他字段为空（字符串字段为空字符串，数值字段为 0），`success` 为 false。末尾打印：
 
 ```
 SUCCESS=false
@@ -69,7 +71,9 @@ ID=<视频ID>
 META_JSON=<元信息.json 路径>
 ```
 
-**ID 解析失败时**（如短链跳转被拦截、无法提取 ID），**不会创建任何目录或文件**，只打印错误信息：
+**情况三：ID 解析失败**
+
+不创建任何目录或文件，只打印错误信息：
 
 ```
 SUCCESS=false
@@ -98,9 +102,9 @@ SUCCESS=false
 
 | 平台 | URL 特征 | 元信息来源 | cookie 文件 |
 |------|----------|-----------|-------------|
-| 快手 | `v.kuaishou.com` | 移动端页面提取 | `cookies-kuaishou.txt` |
-| 抖音 | `v.douyin.com` | 分享页 `_ROUTER_DATA` | `cookies-douyin.txt` |
-| B站 | `b23.tv` / `bilibili.com` | B站 API | `cookies-bilibili.txt` |
+| 快手 | `v.kuaishou.com`、`kuaishou.com/short-video`、`chenzhongtech.com` | 移动端页面提取 | `cookies-kuaishou.txt` |
+| 抖音 | `v.douyin.com`、`douyin.com/video`、`iesdouyin.com` | 分享页 `_ROUTER_DATA` | `cookies-douyin.txt` |
+| B站 | `b23.tv`、`bilibili.com/video`、`BV` 开头的 ID | B站 API | `cookies-bilibili.txt` |
 
 ## 依赖
 
