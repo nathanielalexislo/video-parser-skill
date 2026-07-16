@@ -1,7 +1,8 @@
 ---
 name: video-meta-parser
 description: >
-  视频元信息解析技能，支持抖音/快手/哔哩哔哩。输入视频短链，解析元信息、下载视频、转录音频。
+  视频元信息解析技能，支持抖音/快手/哔哩哔哩。支持单 URL 或批量处理模式。
+  输入视频短链（或包含多个短链的文件），解析元信息、下载视频、转录音频。
   三平台的短链最终转化成含义一致的元信息结构：
   id、title、desc、publish_time、play_count、like_count、comment_count、share_count、author、source_url、
   transcription、success、fail_reason。
@@ -12,7 +13,7 @@ description: >
 
 # 视频元信息解析
 
-支持抖音、快手、哔哩哔哩三个平台的短视频链接，完成视频短链 → 元信息解析 → 视频下载 → 音频转录的完整流程。
+支持抖音、快手、哔哩哔哩三个平台的短视频链接，支持单 URL 或批量处理模式，完成视频短链 → 元信息解析 → 视频下载 → 音频转录的完整流程。
 本技能会下载视频并转录音频，但不生成内容描述（那是 `video-content-parser` 的职责）。
 
 ## 统一元信息结构
@@ -37,7 +38,11 @@ description: >
 
 ## 工作流程
 
-收到用户的视频链接后，运行主控脚本：
+脚本支持两种模式：单 URL 模式和批量处理模式。
+
+### 单 URL 模式
+
+处理单个视频链接：
 
 ```bash
 python3 <skill-path>/scripts/meta_parser.py "<用户提供的URL>" \
@@ -47,11 +52,64 @@ python3 <skill-path>/scripts/meta_parser.py "<用户提供的URL>" \
   --hf-endpoint https://hf-mirror.com
 ```
 
+### 批量处理模式
+
+处理多个视频链接（从文件中读取）：
+
+```bash
+python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
+  --output-dir <workspace>/videos \
+  --cookies-dir <workspace> \
+  --concurrent 8 \
+  --batch-size 100 \
+  --whisper-model base \
+  --hf-endpoint https://hf-mirror.com
+```
+
+**参数说明：**
 - `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
 - `<workspace>` 是用户当前工作区路径
+- `--input-file` 批量输入文件路径（每行一个 URL，支持 `#` 开头的注释行）
+- `--concurrent` 并发数，默认 8（可根据机器性能调整）
+- `--batch-size` 每批大小，默认 100
 - `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
 - `--whisper-model` 指定 Whisper 模型名称（默认: base，可选: tiny, small, medium, large）
 - `--hf-endpoint` 指定 Hugging Face endpoint（可选，用于加速模型下载）
+
+**批量处理特性：**
+- 自动去重：基于 URL 字符串去重，避免重复处理
+- 分批处理：按 `--batch-size` 分批，每批内并发处理
+- 进度显示：实时显示每个 URL 的处理状态（✓ 成功 / ✗ 失败）
+- 错误隔离：单个 URL 失败不影响其他 URL 的处理
+- 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果
+
+**batch_summary.json 结构：**
+
+```json
+{
+  "total": 150,
+  "success": 142,
+  "failed": 8,
+  "results": [
+    {
+      "url": "https://v.douyin.com/xxx",
+      "video_id": "123456",
+      "success": true,
+      "meta_path": "/path/to/元信息.json",
+      "error": null
+    },
+    {
+      "url": "https://v.kuaishou.com/yyy",
+      "video_id": null,
+      "success": false,
+      "meta_path": null,
+      "error": "视频不存在"
+    }
+  ]
+}
+```
+
+### 单 URL 模式的输出
 
 脚本执行后会有三种情况：
 
