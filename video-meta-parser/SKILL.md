@@ -100,7 +100,7 @@ SUCCESS=false
 - 音频文件位置（`<id>/_analysis/audio.wav`）
 - 视频基本信息（作者、标题、发布时间、播放/点赞/评论/分享数据表格）
 - 转录摘要（如有）：语言、段落数
-- 如需生成内容描述，提示可用 `video-content-parser`，并把 `id` 与 `source_url` 传给它
+- 如需生成内容描述，提示可用 `video-content-parser`，并把 `SAVE_DIR`（即 `<workspace>/videos/<id>/`）传给它
 
 **ID 解析成功但元信息获取失败时** (`success=false` 但输出了 `ID=`)：
 - 报告 `fail_reason` 中的错误原因

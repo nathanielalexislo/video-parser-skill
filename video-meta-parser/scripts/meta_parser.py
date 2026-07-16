@@ -73,16 +73,21 @@ def transcribe_audio(audio_path: str, model_name: str = 'base',
     env = os.environ.copy()
     if hf_endpoint:
         env['HF_ENDPOINT'] = hf_endpoint
+    # 通过环境变量传递路径，避免 f-string 嵌套引号问题
+    env['AUDIO_PATH'] = audio_path
+    env['MODEL_NAME'] = model_name
 
-    code = f'''
-import json, sys
+    code = '''
+import json, sys, os
 from faster_whisper import WhisperModel
-model = WhisperModel("{model_name}", device="cpu", compute_type="int8")
-segments, info = model.transcribe("{audio_path}", language="zh", beam_size=5, vad_filter=True)
+audio_path = os.environ['AUDIO_PATH']
+model_name = os.environ['MODEL_NAME']
+model = WhisperModel(model_name, device="cpu", compute_type="int8")
+segments, info = model.transcribe(audio_path, language="zh", beam_size=5, vad_filter=True)
 results = []
 for seg in segments:
-    results.append({{"start": round(seg.start, 1), "end": round(seg.end, 1), "text": seg.text.strip()}})
-output = {{"language": info.language, "language_prob": info.language_probability, "segments": results}}
+    results.append({"start": round(seg.start, 1), "end": round(seg.end, 1), "text": seg.text.strip()})
+output = {"language": info.language, "language_prob": info.language_probability, "segments": results}
 print(json.dumps(output, ensure_ascii=False))
 '''
     result = subprocess.run(
