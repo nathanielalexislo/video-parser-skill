@@ -28,6 +28,8 @@ import json
 import os
 import subprocess
 import sys
+from concurrent.futures import ThreadPoolExecutor, as_completed
+from typing import Optional
 
 
 def detect_platform(url: str) -> str:
@@ -261,83 +263,296 @@ def parse_meta(platform: str, url: str, scripts_dir: str,
     return to_unified_meta(platform, info, transcription)
 
 
+def process_single_url(url: str, output_dir: str, cookies_dir: str, scripts_dir: str,
+                       whisper_model: str, hf_endpoint: str) -> dict:
+    """处理单个 URL，返回结果摘要
+    
+    Returns:
+        dict: {
+            'url': str,
+            'video_id': str | None,
+            'success': bool,
+            'meta_path': str | None,
+            'error': str | None
+        }
+    """
+    result = {
+        'url': url,
+        'video_id': None,
+        'success': False,
+        'meta_path': None,
+        'error': None
+    }
+    
+    try:
+        # 检测平台
+        platform = detect_platform(url)
+        cookie_file = find_cookie(cookies_dir, platform)
+        
+        # 解析元信息（包括下载和转录）
+        meta = parse_meta(platform, url, scripts_dir, cookie_file,
+                         output_dir, whisper_model, hf_endpoint)
+        
+        # 保存元信息
+        if meta['success'] or meta['id']:
+            save_dir = os.path.join(output_dir, meta['id'])
+            os.makedirs(save_dir, exist_ok=True)
+            meta_path = os.path.join(save_dir, '元信息.json')
+            with open(meta_path, 'w', encoding='utf-8') as f:
+                json.dump(meta, f, ensure_ascii=False, indent=2)
+            
+            result['video_id'] = meta['id']
+            result['meta_path'] = meta_path
+            result['success'] = meta['success']
+            if not meta['success']:
+                result['error'] = meta['fail_reason']
+        else:
+            result['error'] = meta['fail_reason']
+            
+    except Exception as e:
+        result['error'] = str(e)
+    
+    return result
+
+
+def process_batch(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir: str,
+                  whisper_model: str, hf_endpoint: str, concurrent: int,
+                  batch_num: int, total_batches: int) -> list[dict]:
+    """并发处理一批 URL
+    
+    Args:
+        urls: URL 列表
+        concurrent: 并发数
+        batch_num: 当前批次号（从 1 开始）
+        total_batches: 总批次数
+        
+    Returns:
+        list[dict]: 每个 URL 的处理结果
+    """
+    print(f"\n=== 处理批次 {batch_num}/{total_batches} ({len(urls)} 个 URL，并发 {concurrent}) ===")
+    
+    results = []
+    completed = 0
+    
+    with ThreadPoolExecutor(max_workers=concurrent) as executor:
+        # 提交所有任务
+        future_to_url = {
+            executor.submit(process_single_url, url, output_dir, cookies_dir, 
+                          scripts_dir, whisper_model, hf_endpoint): url
+            for url in urls
+        }
+        
+        # 等待完成并收集结果
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                result = future.result()
+                results.append(result)
+                completed += 1
+                
+                # 打印进度
+                status = "✓" if result['success'] else "✗"
+                vid = result['video_id'] or 'N/A'
+                print(f"  [{completed}/{len(urls)}] {status} {url} -> {vid}")
+                if not result['success'] and result['error']:
+                    print(f"         错误: {result['error'][:80]}")
+                    
+            except Exception as e:
+                # 不应该发生，因为 process_single_url 已经捕获了异常
+                results.append({
+                    'url': url,
+                    'video_id': None,
+                    'success': False,
+                    'meta_path': None,
+                    'error': f'Unexpected error: {str(e)}'
+                })
+                completed += 1
+                print(f"  [{completed}/{len(urls)}] ✗ {url} -> Unexpected error")
+    
+    return results
+
+
+def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir: str,
+                whisper_model: str, hf_endpoint: str, concurrent: int, batch_size: int) -> dict:
+    """分批处理所有 URL
+    
+    Returns:
+        dict: 汇总报告 {
+            'total': int,
+            'success': int,
+            'failed': int,
+            'results': list[dict]
+        }
+    """
+    # 去重
+    unique_urls = list(dict.fromkeys(urls))  # 保持顺序的去重
+    if len(unique_urls) < len(urls):
+        print(f"去重: {len(urls)} -> {len(unique_urls)} 个 URL")
+    
+    # 分批
+    batches = [unique_urls[i:i+batch_size] for i in range(0, len(unique_urls), batch_size)]
+    total_batches = len(batches)
+    
+    print(f"\n总计: {len(unique_urls)} 个 URL，分 {total_batches} 批处理")
+    
+    # 处理所有批次
+    all_results = []
+    for i, batch in enumerate(batches, 1):
+        batch_results = process_batch(batch, output_dir, cookies_dir, scripts_dir,
+                                     whisper_model, hf_endpoint, concurrent,
+                                     i, total_batches)
+        all_results.extend(batch_results)
+    
+    # 生成汇总报告
+    success_count = sum(1 for r in all_results if r['success'])
+    failed_count = len(all_results) - success_count
+    
+    summary = {
+        'total': len(all_results),
+        'success': success_count,
+        'failed': failed_count,
+        'results': all_results
+    }
+    
+    # 保存汇总报告
+    summary_path = os.path.join(output_dir, 'batch_summary.json')
+    os.makedirs(output_dir, exist_ok=True)
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(summary, f, ensure_ascii=False, indent=2)
+    
+    # 打印最终汇总
+    print(f"\n=== 批量处理完成 ===")
+    print(f"总计: {summary['total']} 个 URL")
+    print(f"成功: {summary['success']}")
+    print(f"失败: {summary['failed']}")
+    print(f"汇总报告: {summary_path}")
+    
+    return summary
+
+
 def main():
-    parser = argparse.ArgumentParser(description='视频元信息解析主控')
-    parser.add_argument('url', help='视频短链')
+    parser = argparse.ArgumentParser(
+        description='视频元信息解析主控 - 支持单 URL 或批量处理',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+示例:
+  # 单 URL 模式
+  python3 meta_parser.py "https://v.douyin.com/xxx"
+  
+  # 批量模式
+  python3 meta_parser.py --input-file urls.txt --concurrent 8 --batch-size 100
+        """)
+    
+    # 输入参数（互斥）
+    input_group = parser.add_mutually_exclusive_group(required=True)
+    input_group.add_argument('url', nargs='?', help='单个视频短链')
+    input_group.add_argument('--input-file', help='批量输入文件（每行一个 URL）')
+    
+    # 通用参数
     parser.add_argument('--output-dir', default='./videos', help='输出根目录')
     parser.add_argument('--cookies-dir', default='.', help='cookie 文件所在目录')
     parser.add_argument('--scripts-dir', default=None, help='平台脚本目录（默认与本脚本同目录）')
     parser.add_argument('--whisper-model', default='base', help='Whisper 模型名称（默认: base）')
     parser.add_argument('--hf-endpoint', default='', help='Hugging Face endpoint（可选）')
+    
+    # 批量模式参数
+    parser.add_argument('--concurrent', type=int, default=8, help='并发数（默认: 8）')
+    parser.add_argument('--batch-size', type=int, default=100, help='每批大小（默认: 100）')
+    
     args = parser.parse_args()
-
+    
     scripts_dir = args.scripts_dir or os.path.dirname(os.path.abspath(__file__))
-
-    print("=== 视频元信息解析 ===")
-    platform = detect_platform(args.url)
-    print(f"平台: {platform}")
-
-    cookie_file = find_cookie(args.cookies_dir, platform)
-    if cookie_file:
-        print(f"Cookie: {cookie_file}")
+    
+    # 批量模式
+    if args.input_file:
+        if not os.path.exists(args.input_file):
+            print(f"错误: 输入文件不存在: {args.input_file}")
+            sys.exit(1)
+        
+        # 读取 URL 列表
+        with open(args.input_file, 'r', encoding='utf-8') as f:
+            urls = [line.strip() for line in f if line.strip() and not line.startswith('#')]
+        
+        if not urls:
+            print("错误: 输入文件为空")
+            sys.exit(1)
+        
+        print(f"=== 批量模式 ===")
+        print(f"输入文件: {args.input_file}")
+        print(f"URL 数量: {len(urls)}")
+        print(f"并发数: {args.concurrent}")
+        print(f"批大小: {args.batch_size}")
+        
+        process_all(urls, args.output_dir, args.cookies_dir, scripts_dir,
+                   args.whisper_model, args.hf_endpoint, args.concurrent, args.batch_size)
+    
+    # 单 URL 模式
     else:
-        print(f"Cookie: 未找到 cookies-{platform}.txt，将以匿名方式访问")
+        print("=== 视频元信息解析 ===")
+        platform = detect_platform(args.url)
+        print(f"平台: {platform}")
 
-    try:
-        meta = parse_meta(platform, args.url, scripts_dir, cookie_file,
-                         args.output_dir, args.whisper_model, args.hf_endpoint)
-    except Exception as e:
-        # 解析过程中出现异常（平台识别失败等），直接打印错误，不创建任何文件
-        print(f"\n=== 解析失败 ===")
-        print(f"失败原因: {str(e)}")
-        print(f"\nSUCCESS=false")
-        return
+        cookie_file = find_cookie(args.cookies_dir, platform)
+        if cookie_file:
+            print(f"Cookie: {cookie_file}")
+        else:
+            print(f"Cookie: 未找到 cookies-{platform}.txt，将以匿名方式访问")
 
-    # 解析完成（可能成功或失败）
-    if meta['success']:
-        # 成功时以 id 为父目录
-        save_dir = os.path.join(args.output_dir, meta['id'])
-        os.makedirs(save_dir, exist_ok=True)
-        meta_path = os.path.join(save_dir, '元信息.json')
-        with open(meta_path, 'w', encoding='utf-8') as f:
-            json.dump(meta, f, ensure_ascii=False, indent=2)
+        try:
+            meta = parse_meta(platform, args.url, scripts_dir, cookie_file,
+                             args.output_dir, args.whisper_model, args.hf_endpoint)
+        except Exception as e:
+            # 解析过程中出现异常（平台识别失败等），直接打印错误，不创建任何文件
+            print(f"\n=== 解析失败 ===")
+            print(f"失败原因: {str(e)}")
+            print(f"\nSUCCESS=false")
+            return
 
-        print("\n=== 解析完成 ===")
-        print(f"视频ID:   {meta['id']}")
-        print(f"标题:     {meta['title']}")
-        print(f"作者:     {meta['author']}")
-        print(f"发布时间: {meta['publish_time']}")
-        print(f"播放/点赞/评论/分享: "
-              f"{meta['play_count']:,} / {meta['like_count']:,} / "
-              f"{meta['comment_count']:,} / {meta['share_count']:,}")
-        print(f"元信息:   {meta_path}")
-        print(f"\nSUCCESS=true")
-        print(f"ID={meta['id']}")
-        print(f"SOURCE_URL={meta['source_url']}")
-        print(f"META_JSON={meta_path}")
-    else:
-        # 失败时：如果有 id（resolve 成功），创建目录和 JSON；否则只打印错误
-        if meta['id']:
+        # 解析完成（可能成功或失败）
+        if meta['success']:
+            # 成功时以 id 为父目录
             save_dir = os.path.join(args.output_dir, meta['id'])
             os.makedirs(save_dir, exist_ok=True)
             meta_path = os.path.join(save_dir, '元信息.json')
             with open(meta_path, 'w', encoding='utf-8') as f:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
 
-            print(f"\n=== 解析失败 ===")
-            print(f"失败原因: {meta['fail_reason']}")
+            print("\n=== 解析完成 ===")
             print(f"视频ID:   {meta['id']}")
-            print(f"SOURCE_URL: {meta['source_url']}")
+            print(f"标题:     {meta['title']}")
+            print(f"作者:     {meta['author']}")
+            print(f"发布时间: {meta['publish_time']}")
+            print(f"播放/点赞/评论/分享: "
+                  f"{meta['play_count']:,} / {meta['like_count']:,} / "
+                  f"{meta['comment_count']:,} / {meta['share_count']:,}")
             print(f"元信息:   {meta_path}")
-            print(f"\nSUCCESS=false")
+            print(f"\nSUCCESS=true")
             print(f"ID={meta['id']}")
+            print(f"SOURCE_URL={meta['source_url']}")
             print(f"META_JSON={meta_path}")
         else:
-            # resolve 失败，没有 id，不创建任何文件
-            print(f"\n=== 解析失败 ===")
-            print(f"失败原因: {meta['fail_reason']}")
-            print(f"\nSUCCESS=false")
-        return
+            # 失败时：如果有 id（resolve 成功），创建目录和 JSON；否则只打印错误
+            if meta['id']:
+                save_dir = os.path.join(args.output_dir, meta['id'])
+                os.makedirs(save_dir, exist_ok=True)
+                meta_path = os.path.join(save_dir, '元信息.json')
+                with open(meta_path, 'w', encoding='utf-8') as f:
+                    json.dump(meta, f, ensure_ascii=False, indent=2)
+
+                print(f"\n=== 解析失败 ===")
+                print(f"失败原因: {meta['fail_reason']}")
+                print(f"视频ID:   {meta['id']}")
+                print(f"SOURCE_URL: {meta['source_url']}")
+                print(f"元信息:   {meta_path}")
+                print(f"\nSUCCESS=false")
+                print(f"ID={meta['id']}")
+                print(f"META_JSON={meta_path}")
+            else:
+                # resolve 失败，没有 id，不创建任何文件
+                print(f"\n=== 解析失败 ===")
+                print(f"失败原因: {meta['fail_reason']}")
+                print(f"\nSUCCESS=false")
+            return
 
 
 if __name__ == '__main__':
