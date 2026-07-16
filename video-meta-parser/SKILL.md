@@ -55,10 +55,12 @@ python3 <skill-path>/scripts/meta_parser.py "<用户提供的URL>" \
 
 脚本执行后会有三种情况：
 
-**情况一：完全成功**
+**情况一：元信息解析成功** (`success=true`)
 
-以 `<id>` 为父目录创建 `<workspace>/videos/<id>/`，包含以下文件：
-- `元信息.json` — 完整元信息（含转录数据）
+以 `<id>` 为父目录创建 `<workspace>/videos/<id>/`，至少包含：
+- `元信息.json` — 完整元信息（`transcription` 字段可能为 null，如果下载或转录失败）
+
+如果视频下载和音频转录也成功，还会包含：
 - `视频文件.mp4` — 下载的视频
 - `_analysis/audio.wav` — 提取的音频
 
@@ -94,12 +96,12 @@ SUCCESS=false
 
 根据 `success` 字段和输出信息向用户报告：
 
-**成功时** (`success=true`)：
+**元信息解析成功时** (`success=true`)：
 - 元信息保存位置（`<id>/元信息.json`）
-- 视频文件位置（`<id>/视频文件.mp4`）
-- 音频文件位置（`<id>/_analysis/audio.wav`）
 - 视频基本信息（作者、标题、发布时间、播放/点赞/评论/分享数据表格）
-- 转录摘要（如有）：语言、段落数
+- 如果视频文件存在，报告视频文件位置（`<id>/视频文件.mp4`）
+- 如果音频文件存在，报告音频文件位置（`<id>/_analysis/audio.wav`）
+- 如果 `transcription` 不为 null，报告转录摘要：语言、段落数
 - 如需生成内容描述，提示可用 `video-content-parser`，并把 `SAVE_DIR`（即 `<workspace>/videos/<id>/`）传给它
 
 **ID 解析成功但元信息获取失败时** (`success=false` 但输出了 `ID=`)：
