@@ -1,74 +1,48 @@
 ---
 name: video-content-parser
 description: >
-  视频下载与内容描述生成技能，支持抖音/快手/哔哩哔哩。输入 video-meta-parser 产出的
-  id 与 source_url，自动下载视频，再通过关键帧分析 + Whisper 语音转录生成视频内容描述。
-  当用户提到 下载视频、分析视频内容、视频摘要、生成视频内容描述，
-  或已经通过 video-meta-parser 拿到 id/source_url 需要进一步处理时，务必使用本技能。
-  若用户只给了视频短链还没有 id/source_url，应先用 video-meta-parser 解析元信息。
+  视频内容描述生成技能，支持抖音/快手/哔哩哔哩。基于 video-meta-parser 已下载的视频和转录结果，
+  通过关键帧分析生成视频内容描述。
+  当用户提到 分析视频内容、视频摘要、生成视频内容描述，
+  或已经通过 video-meta-parser 完成视频下载后需要进一步处理时，务必使用本技能。
+  若用户只给了视频短链还没有下载视频，应先用 video-meta-parser 解析元信息并下载视频。
 ---
 
-# 视频下载与内容描述生成
+# 视频内容描述生成
 
-支持抖音、快手、哔哩哔哩三个平台。以 `video-meta-parser` 产出的 `id` 和 `source_url`
-作为输入，完成：下载视频 → 生成内容描述。
+支持抖音、快手、哔哩哔哩三个平台。基于 `video-meta-parser` 已下载的视频和转录结果，
+提取关键帧并生成内容描述。
 
-> 前置：本技能依赖 `video-meta-parser` 先解析出 `id` 与 `source_url`。
-> `id` 决定下载到哪个目录（`<output-dir>/<id>/`）、`source_url` 决定平台与下载对象。
+> 前置：本技能依赖 `video-meta-parser` 先完成元信息解析、视频下载和音频转录。
+> `video-meta-parser` 会在 `<output-dir>/<id>/` 下生成视频文件、音频文件和转录结果。
 > 若用户只提供了原始短链，请先运行 `video-meta-parser`。
 
 ## 工作流程
 
-### Step 1: 下载视频
+### Step 1: 准备分析素材
 
-运行下载主控脚本，输入第一个技能产出的 `id` 与 `source_url`：
-
-```bash
-python3 <skill-path>/scripts/download_video.py \
-  --id "<video-meta-parser 产出的 id>" \
-  --source-url "<video-meta-parser 产出的 source_url>" \
-  --output-dir <workspace>/videos \
-  --cookies-dir <workspace>
-```
-
-- `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
-- `<workspace>` 是用户当前工作区路径
-- `--output-dir` 应与 `video-meta-parser` 使用的相同，这样视频会下载到 `<output-dir>/<id>/`
-- `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
-
-脚本会在 `<output-dir>/<id>/` 下生成：
-- `视频文件.mp4` — 视频文件
-- `_download_result.json` — 含 `video_id`、`source_url`、`mp4_path`、`save_dir`
-- 末尾打印：
-  ```
-  MP4_PATH=<视频文件路径>
-  SAVE_DIR=<保存目录>
-  RESULT_JSON=<_download_result.json 路径>
-  ```
-
-**下载失败时**，脚本会抛出异常，不创建 `视频文件.mp4` 和 `_download_result.json`，流程中止。
-
-### Step 2: 准备分析素材
-
-视频下载完成后，运行分析脚本（使用 Step 1 输出的 `MP4_PATH` 和 `SAVE_DIR`）：
+运行分析脚本，输入 `video-meta-parser` 创建的保存目录：
 
 ```bash
-python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
-  --save-dir "<SAVE_DIR>" \
+python3 <skill-path>/scripts/analyze_video.py "<SAVE_DIR>" \
   --whisper-model base \
   --hf-endpoint https://hf-mirror.com
 ```
 
+- `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
+- `<SAVE_DIR>` 是 `video-meta-parser` 创建的保存目录（如 `<workspace>/videos/<id>/`）
+
 可选参数：
 - `--frame-interval <秒数>`：帧提取间隔，默认 2 秒
-- `--skip-whisper`：跳过语音转录（当 whisper 失败或不需要时使用）
+- `--skip-whisper`：跳过语音转录（当已有转录结果或不需要时使用）
 
 该脚本会：
-1. 用 ffprobe 获取视频时长、分辨率等基本信息
-2. 用 ffmpeg 每 N 秒提取一帧关键帧截图（默认每 2 秒）
-3. 用 ffmpeg 提取音频为 16kHz 单声道 WAV 格式
-4. 用 faster-whisper 转录音频为带时间戳的文本
-5. 在 `<SAVE_DIR>/` 下创建 `_analysis/` 子目录，将关键帧截图、音频文件、`analysis.json` 保存其中
+1. 查找 `<SAVE_DIR>/视频文件.mp4`（由 `video-meta-parser` 下载）
+2. 用 ffprobe 获取视频时长、分辨率等基本信息
+3. 用 ffmpeg 每 N 秒提取一帧关键帧截图（默认每 2 秒）
+4. 查找 `<SAVE_DIR>/_analysis/audio.wav`，如不存在则用 ffmpeg 提取音频
+5. 查找 `<SAVE_DIR>/元信息.json` 中的 `transcription` 字段，如不存在则用 faster-whisper 转录音频
+6. 在 `<SAVE_DIR>/_analysis/` 目录下保存关键帧截图和 `analysis.json`
 
 `analysis.json` 结构：
 
@@ -97,9 +71,9 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 }
 ```
 
-### Step 3: 生成视频内容描述
+### Step 2: 生成视频内容描述
 
-基于 Step 2 准备的分析素材，按固定结构生成视频内容描述：
+基于 Step 1 准备的分析素材，按固定结构生成视频内容描述：
 
 1. 用 Read 工具逐个读取 `_analysis/` 目录下的帧截图（路径在 `analysis.json` 的 `frames` 字段中）
 2. 为每个关键帧生成描述，包括时间段和画面内容，形成**关键帧转录**
@@ -130,28 +104,19 @@ python3 <skill-path>/scripts/analyze_video.py "<MP4_PATH>" \
 - 音频转录的时间段与 `analysis.json` 中 `transcription.segments` 的 `start`/`end` 对应
 - **不要读取 `元信息.json`**，所有需要的信息都已包含在 `analysis.json` 中
 
-## 平台适配说明
-
-| 平台 | source_url 特征 | 下载策略 | cookie 文件 |
-|------|----------|----------|-------------|
-| 快手 | `v.kuaishou.com`、`kuaishou.com/short-video`、`chenzhongtech.com` | 移动端页面提取 mp4 直链 → yt-dlp → requests | `cookies-kuaishou.txt` |
-| 抖音 | `v.douyin.com`、`douyin.com/video`、`iesdouyin.com` | 分享页 `_ROUTER_DATA` → playwm→play 去水印 → yt-dlp → requests | `cookies-douyin.txt` |
-| B站 | `b23.tv`、`bilibili.com/video`、`BV` 开头的 ID | B站 API → yt-dlp（DASH自动合并）→ API+ffmpeg | `cookies-bilibili.txt` |
-
 ## 依赖
 
-- **ffmpeg / ffprobe**: 视频处理（帧提取、音频提取、DASH合并）
-- **yt-dlp**: 优先下载工具
-- **faster-whisper**: 语音转录（Python 库，`pip install faster-whisper`）
-- **requests**: HTTP 请求（Python 库）
+- **ffmpeg / ffprobe**: 视频处理（帧提取、音频提取）
+- **faster-whisper**: 语音转录（Python 库，`pip install faster-whisper`，仅在 `元信息.json` 中没有转录结果时使用）
 
 ## 错误处理
 
-- 如果 cookie 文件不存在，脚本会跳过 cookie 加载，以匿名方式访问（可能受限）
-- 如果 yt-dlp 下载失败，自动回退到平台专用 API 或 requests 直接下载
-- 如果所有下载方式均失败，`download_video.py` 会抛出异常，流程中止
-- 如果视频文件损坏或无法读取，`analyze_video.py` 会在第一步获取视频信息时失败并抛出异常，流程中止
-- 如果 ffmpeg 不可用或执行失败，`analyze_video.py` 会在帧提取或音频提取步骤失败，但脚本仍会继续执行：
+- 如果 `<SAVE_DIR>/视频文件.mp4` 不存在，脚本会提示先使用 `video-meta-parser` 下载视频，流程中止
+- 如果 `<SAVE_DIR>/_analysis/audio.wav` 不存在，脚本会自动提取音频；如果提取失败，`transcription` 字段为 null
+- 如果 `<SAVE_DIR>/元信息.json` 中存在 `transcription` 字段，脚本会直接使用，跳过转录
+- 如果 `<SAVE_DIR>/元信息.json` 中 `transcription` 为 null 且音频提取成功，脚本会使用 faster-whisper 转录
+- 如果视频文件损坏或无法读取，脚本会在获取视频信息时失败并抛出异常，流程中止
+- 如果 ffmpeg 不可用或执行失败，脚本会在帧提取或音频提取步骤失败，但脚本仍会继续执行：
   - 帧提取失败时，`frames` 字段为空列表
   - 音频提取失败时，不会生成 `audio.wav`，Whisper 转录会被跳过，`transcription` 字段为 null
 - 如果 faster-whisper 转录失败，脚本会打印错误信息，`transcription` 字段为 null，但仍会生成 `analysis.json`

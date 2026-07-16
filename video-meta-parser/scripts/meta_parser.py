@@ -222,7 +222,12 @@ def parse_meta(platform: str, url: str, scripts_dir: str,
         video_path = os.path.join(save_dir, '视频文件.mp4')
         
         print(f"\n=== 下载视频 ===")
-        mod.download_video(info, video_path, session, cookie_file)
+        if platform == 'kuaishou':
+            mod.download_video(info['video_url'], video_path, session, cookie_file)
+        elif platform == 'douyin':
+            mod.download_video(info['video_url'], video_path, session, cookie_file)
+        elif platform == 'bilibili':
+            mod.download_video(video_id, info['cid'], video_path, session, cookie_file)
         print(f"视频已保存: {video_path}")
         
         # 提取音频
