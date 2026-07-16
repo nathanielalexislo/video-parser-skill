@@ -82,6 +82,7 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
 - 进度显示：实时显示每个 URL 的处理状态（✓ 成功 / ✗ 失败）
 - 错误隔离：单个 URL 失败不影响其他 URL 的处理
 - 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果
+- URL 映射表：生成 `<output-dir>/url_mapping.json` 和 `url_mapping.csv` 记录短链到 source_url 的映射
 
 **batch_summary.json 结构：**
 
@@ -94,6 +95,7 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
     {
       "url": "https://v.douyin.com/xxx",
       "video_id": "123456",
+      "source_url": "https://www.douyin.com/video/123456",
       "success": true,
       "meta_path": "/path/to/元信息.json",
       "error": null
@@ -101,6 +103,7 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
     {
       "url": "https://v.kuaishou.com/yyy",
       "video_id": null,
+      "source_url": null,
       "success": false,
       "meta_path": null,
       "error": "视频不存在"
@@ -108,6 +111,41 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
   ]
 }
 ```
+
+**url_mapping.json 结构：**
+
+```json
+{
+  "total": 150,
+  "mappings": [
+    {
+      "short_url": "https://v.douyin.com/xxx",
+      "source_url": "https://www.douyin.com/video/123456",
+      "video_id": "123456",
+      "success": true,
+      "error": null
+    },
+    {
+      "short_url": "https://v.douyin.com/aaa",
+      "source_url": "https://www.douyin.com/video/123456",
+      "video_id": "123456",
+      "success": true,
+      "error": null
+    }
+  ]
+}
+```
+
+**url_mapping.csv 格式：**
+
+```csv
+short_url,source_url,video_id,success,error
+https://v.douyin.com/xxx,https://www.douyin.com/video/123456,123456,True,
+https://v.douyin.com/aaa,https://www.douyin.com/video/123456,123456,True,
+https://v.kuaishou.com/yyy,,,False,视频不存在
+```
+
+**注意：** 多个短链可能映射到同一个 source_url 和 video_id（如上例中的 xxx 和 aaa 都指向同一个视频）。
 
 ### 单 URL 模式的输出
 

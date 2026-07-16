@@ -271,6 +271,7 @@ def process_single_url(url: str, output_dir: str, cookies_dir: str, scripts_dir:
         dict: {
             'url': str,
             'video_id': str | None,
+            'source_url': str | None,
             'success': bool,
             'meta_path': str | None,
             'error': str | None
@@ -279,6 +280,7 @@ def process_single_url(url: str, output_dir: str, cookies_dir: str, scripts_dir:
     result = {
         'url': url,
         'video_id': None,
+        'source_url': None,
         'success': False,
         'meta_path': None,
         'error': None
@@ -302,6 +304,7 @@ def process_single_url(url: str, output_dir: str, cookies_dir: str, scripts_dir:
                 json.dump(meta, f, ensure_ascii=False, indent=2)
             
             result['video_id'] = meta['id']
+            result['source_url'] = meta.get('source_url')
             result['meta_path'] = meta_path
             result['success'] = meta['success']
             if not meta['success']:
@@ -420,12 +423,59 @@ def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir:
     with open(summary_path, 'w', encoding='utf-8') as f:
         json.dump(summary, f, ensure_ascii=False, indent=2)
     
+    # 生成短链到 source_url 的映射表
+    mapping_path = os.path.join(output_dir, 'url_mapping.json')
+    mapping_data = {
+        'total': len(all_results),
+        'mappings': []
+    }
+    
+    for result in all_results:
+        mapping_entry = {
+            'short_url': result['url'],
+            'source_url': result['source_url'],
+            'video_id': result['video_id'],
+            'success': result['success'],
+            'error': result['error']
+        }
+        mapping_data['mappings'].append(mapping_entry)
+    
+    with open(mapping_path, 'w', encoding='utf-8') as f:
+        json.dump(mapping_data, f, ensure_ascii=False, indent=2)
+    
+    # 生成 CSV 格式的映射表（便于查看）
+    csv_path = os.path.join(output_dir, 'url_mapping.csv')
+    with open(csv_path, 'w', encoding='utf-8') as f:
+        # 写入表头
+        f.write('short_url,source_url,video_id,success,error\n')
+        # 写入数据
+        for result in all_results:
+            # CSV 转义：如果字段包含逗号或引号，用引号包裹
+            def csv_escape(value):
+                if value is None:
+                    return ''
+                s = str(value)
+                if ',' in s or '"' in s or '\n' in s:
+                    return '"' + s.replace('"', '""') + '"'
+                return s
+            
+            row = [
+                csv_escape(result['url']),
+                csv_escape(result['source_url']),
+                csv_escape(result['video_id']),
+                csv_escape(result['success']),
+                csv_escape(result['error'])
+            ]
+            f.write(','.join(row) + '\n')
+    
     # 打印最终汇总
     print(f"\n=== 批量处理完成 ===")
     print(f"总计: {summary['total']} 个 URL")
     print(f"成功: {summary['success']}")
     print(f"失败: {summary['failed']}")
     print(f"汇总报告: {summary_path}")
+    print(f"URL 映射表 (JSON): {mapping_path}")
+    print(f"URL 映射表 (CSV): {csv_path}")
     
     return summary
 
