@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-视频内容分析脚本 — 提取关键帧 + 音频转录，输出供 agent 整合的结构化数据。
+视频内容分析脚本 — 提取关键帧，读取转录结果，输出供 agent 整合的结构化数据。
+依赖 video-meta-parser 已完成视频下载、音频提取和转录。
 """
 
 import argparse
@@ -57,53 +58,10 @@ def extract_frames(video_path: str, output_dir: str, interval: int = 2) -> list[
     return frames
 
 
-def extract_audio(video_path: str, output_path: str) -> bool:
-    """提取音频为 16kHz 单声道 WAV"""
-    cmd = [
-        'ffmpeg', '-y', '-i', video_path,
-        '-vn', '-acodec', 'pcm_s16le',
-        '-ar', '16000', '-ac', '1', output_path
-    ]
-    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
-    return result.returncode == 0 and os.path.exists(output_path)
-
-
-def transcribe_audio(audio_path: str, model_name: str = 'base',
-                     hf_endpoint: str = '') -> dict:
-    """用 faster-whisper 转录音频"""
-    env = os.environ.copy()
-    if hf_endpoint:
-        env['HF_ENDPOINT'] = hf_endpoint
-
-    # 在子进程中运行转录，避免模型加载问题
-    code = f'''
-import json, sys
-from faster_whisper import WhisperModel
-model = WhisperModel("{model_name}", device="cpu", compute_type="int8")
-segments, info = model.transcribe("{audio_path}", language="zh", beam_size=5, vad_filter=True)
-results = []
-for seg in segments:
-    results.append({{"start": round(seg.start, 1), "end": round(seg.end, 1), "text": seg.text.strip()}})
-output = {{"language": info.language, "language_prob": info.language_probability, "segments": results}}
-print(json.dumps(output, ensure_ascii=False))
-'''
-    result = subprocess.run(
-        [sys.executable, '-c', code],
-        capture_output=True, text=True, timeout=300, env=env
-    )
-    if result.returncode != 0:
-        return {'error': result.stderr.strip().split('\n')[-1]}
-    return json.loads(result.stdout)
-
-
 def main():
-    parser = argparse.ArgumentParser(description='视频分析素材准备')
+    parser = argparse.ArgumentParser(description='视频内容分析')
     parser.add_argument('save_dir', help='视频保存目录（如 <workspace>/videos/<id>/）')
-    parser.add_argument('--whisper-model', default='base', help='Whisper 模型名')
-    parser.add_argument('--hf-endpoint', default='https://hf-mirror.com',
-                        help='HuggingFace 镜像地址')
     parser.add_argument('--frame-interval', type=int, default=2, help='帧提取间隔（秒）')
-    parser.add_argument('--skip-whisper', action='store_true', help='跳过语音转录')
     args = parser.parse_args()
 
     # 查找视频文件
@@ -141,60 +99,27 @@ def main():
         size_kb = os.path.getsize(f['path']) / 1024
         print(f"  [{f['start']}s - {f['end']}s] {f['path']}  ({size_kb:.0f} KB)")
 
-    # Step 3: 查找或提取音频
-    audio_path = os.path.join(analysis_dir, 'audio.wav')
-    print(f"\n=== Step 3: 查找/提取音频 ===")
-    if os.path.exists(audio_path):
-        print(f"音频已存在: {audio_path}")
-        audio_extracted = True
-    else:
-        print("音频不存在，开始提取...")
-        audio_extracted = extract_audio(video_path, audio_path)
-        if audio_extracted:
-            audio_size_kb = os.path.getsize(audio_path) / 1024
-            print(f"音频已提取: {audio_path}  ({audio_size_kb:.0f} KB)")
-        else:
-            print("音频提取失败")
-            audio_path = None
-
-    # Step 4: 查找或转录音频
+    # Step 3: 读取转录结果
     transcription = None
     meta_path = os.path.join(args.save_dir, '元信息.json')
-    print(f"\n=== Step 4: 查找/转录音频 ===")
+    print(f"\n=== Step 3: 读取转录结果 ===")
     
-    # 先尝试从元信息.json 读取转录
     if os.path.exists(meta_path):
         try:
             with open(meta_path, 'r', encoding='utf-8') as f:
                 meta = json.load(f)
             if meta.get('transcription'):
-                print(f"从元信息.json 读取转录结果")
                 transcription = meta['transcription']
+                print(f"从元信息.json 读取转录结果")
                 print(f"语言: {transcription['language']}  "
                       f"(概率 {transcription['language_prob']:.2f})")
                 print(f"转录段落数: {len(transcription.get('segments', []))}")
+            else:
+                print("元信息.json 中没有转录结果")
         except Exception as e:
             print(f"读取元信息.json 失败: {e}")
-    
-    # 如果没有转录结果且音频存在且未跳过转录
-    if transcription is None and audio_path and not args.skip_whisper:
-        print(f"开始 Whisper 转录 (model={args.whisper_model})...")
-        transcription = transcribe_audio(audio_path, args.whisper_model, args.hf_endpoint)
-        if 'error' in transcription:
-            print(f"转录失败: {transcription['error']}")
-            transcription = None
-        else:
-            print(f"语言: {transcription['language']}  "
-                  f"(概率 {transcription['language_prob']:.2f})")
-            print("转录结果:")
-            for seg in transcription['segments']:
-                print(f"  [{seg['start']}s - {seg['end']}s] {seg['text']}")
-    elif transcription is not None:
-        print("已有转录结果，跳过转录")
-    elif args.skip_whisper:
-        print("跳过转录 (--skip-whisper)")
     else:
-        print("无音频文件，跳过转录")
+        print(f"元信息.json 不存在: {meta_path}")
 
     # 输出分析结果 JSON
     analysis = {

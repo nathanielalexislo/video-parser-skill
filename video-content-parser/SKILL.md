@@ -24,9 +24,7 @@ description: >
 运行分析脚本，输入 `video-meta-parser` 创建的保存目录：
 
 ```bash
-python3 <skill-path>/scripts/analyze_video.py "<SAVE_DIR>" \
-  --whisper-model base \
-  --hf-endpoint https://hf-mirror.com
+python3 <skill-path>/scripts/analyze_video.py "<SAVE_DIR>"
 ```
 
 - `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
@@ -34,15 +32,13 @@ python3 <skill-path>/scripts/analyze_video.py "<SAVE_DIR>" \
 
 可选参数：
 - `--frame-interval <秒数>`：帧提取间隔，默认 2 秒
-- `--skip-whisper`：跳过语音转录（当已有转录结果或不需要时使用）
 
 该脚本会：
 1. 查找 `<SAVE_DIR>/视频文件.mp4`（由 `video-meta-parser` 下载）
 2. 用 ffprobe 获取视频时长、分辨率等基本信息
 3. 用 ffmpeg 每 N 秒提取一帧关键帧截图（默认每 2 秒）
-4. 查找 `<SAVE_DIR>/_analysis/audio.wav`，如不存在则用 ffmpeg 提取音频
-5. 查找 `<SAVE_DIR>/元信息.json` 中的 `transcription` 字段，如不存在则用 faster-whisper 转录音频
-6. 在 `<SAVE_DIR>/_analysis/` 目录下保存关键帧截图和 `analysis.json`
+4. 读取 `<SAVE_DIR>/元信息.json` 中的 `transcription` 字段（由 `video-meta-parser` 转录）
+5. 在 `<SAVE_DIR>/_analysis/` 目录下保存关键帧截图和 `analysis.json`
 
 `analysis.json` 结构：
 
@@ -106,17 +102,12 @@ python3 <skill-path>/scripts/analyze_video.py "<SAVE_DIR>" \
 
 ## 依赖
 
-- **ffmpeg / ffprobe**: 视频处理（帧提取、音频提取）
-- **faster-whisper**: 语音转录（Python 库，`pip install faster-whisper`，仅在 `元信息.json` 中没有转录结果时使用）
+- **ffmpeg / ffprobe**: 视频处理（帧提取）
 
 ## 错误处理
 
 - 如果 `<SAVE_DIR>/视频文件.mp4` 不存在，脚本会提示先使用 `video-meta-parser` 下载视频，流程中止
-- 如果 `<SAVE_DIR>/_analysis/audio.wav` 不存在，脚本会自动提取音频；如果提取失败，`transcription` 字段为 null
-- 如果 `<SAVE_DIR>/元信息.json` 中存在 `transcription` 字段，脚本会直接使用，跳过转录
-- 如果 `<SAVE_DIR>/元信息.json` 中 `transcription` 为 null 且音频提取成功，脚本会使用 faster-whisper 转录
+- 如果 `<SAVE_DIR>/元信息.json` 不存在或读取失败，`transcription` 字段为 null
+- 如果 `<SAVE_DIR>/元信息.json` 中 `transcription` 字段为 null，脚本会打印提示信息
 - 如果视频文件损坏或无法读取，脚本会在获取视频信息时失败并抛出异常，流程中止
-- 如果 ffmpeg 不可用或执行失败，脚本会在帧提取或音频提取步骤失败，但脚本仍会继续执行：
-  - 帧提取失败时，`frames` 字段为空列表
-  - 音频提取失败时，不会生成 `audio.wav`，Whisper 转录会被跳过，`transcription` 字段为 null
-- 如果 faster-whisper 转录失败，脚本会打印错误信息，`transcription` 字段为 null，但仍会生成 `analysis.json`
+- 如果 ffmpeg 不可用或执行失败，脚本会在帧提取步骤失败，但脚本仍会继续执行，`frames` 字段为空列表
