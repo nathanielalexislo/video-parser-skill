@@ -185,20 +185,18 @@ def parse_meta(platform: str, url: str, scripts_dir: str,
     如果 resolve 成功但 extract 失败，source_url 仍会填充。
     """
     video_id = None
+    session = None
     try:
+        mod = load_module(scripts_dir, platform)
+        session = mod.build_session(cookie_file)
+        
         if platform == 'kuaishou':
-            mod = load_module(scripts_dir, 'kuaishou')
-            session = mod.build_session(cookie_file)
             video_id = mod.resolve_photo_id(url, session)
             info = mod.extract_video_info(video_id, session)
         elif platform == 'douyin':
-            mod = load_module(scripts_dir, 'douyin')
-            session = mod.build_session(cookie_file)
             video_id = mod.resolve_video_id(url, session)
             info = mod.extract_video_info(video_id, session)
         elif platform == 'bilibili':
-            mod = load_module(scripts_dir, 'bilibili')
-            session = mod.build_session(cookie_file)
             video_id = mod.resolve_bvid(url, session)
             info = mod.extract_video_info(video_id, session)
         else:
@@ -219,22 +217,28 @@ def parse_meta(platform: str, url: str, scripts_dir: str,
             return to_failed_meta(fail_reason, source_url=source_url, video_id=video_id)
         else:
             return to_failed_meta(fail_reason)
+    finally:
+        # 确保 session 被正确关闭
+        if session:
+            session.close()
     
     # 元信息提取成功，继续下载视频和转录音频
+    # 注意：这里需要重新创建 session，因为之前的已经关闭了
     transcription = None
     try:
-        # 下载视频
+        # 下载视频（需要新的 session）
         save_dir = os.path.join(output_dir, video_id)
         os.makedirs(save_dir, exist_ok=True)
         video_path = os.path.join(save_dir, '视频文件.mp4')
         
         print(f"\n=== 下载视频 ===")
-        if platform == 'kuaishou':
-            mod.download_video(info['video_url'], video_path, session, cookie_file)
-        elif platform == 'douyin':
-            mod.download_video(info['video_url'], video_path, session, cookie_file)
-        elif platform == 'bilibili':
-            mod.download_video(video_id, info['cid'], video_path, session, cookie_file)
+        with mod.build_session(cookie_file) as download_session:
+            if platform == 'kuaishou':
+                mod.download_video(info['video_url'], video_path, download_session, cookie_file)
+            elif platform == 'douyin':
+                mod.download_video(info['video_url'], video_path, download_session, cookie_file)
+            elif platform == 'bilibili':
+                mod.download_video(video_id, info['cid'], video_path, download_session, cookie_file)
         print(f"视频已保存: {video_path}")
         
         # 提取音频
@@ -290,20 +294,21 @@ def resolve_url_only(url: str, cookies_dir: str, scripts_dir: str) -> dict:
         
         # 动态加载平台模块
         mod = load_module(scripts_dir, platform)
-        session = mod.build_session(cookie_file)
         
-        # 解析 video_id
-        if platform == 'kuaishou':
-            video_id = mod.resolve_photo_id(url, session)
-            result['source_url'] = f"https://www.kuaishou.com/short-video/{video_id}"
-        elif platform == 'douyin':
-            video_id = mod.resolve_video_id(url, session)
-            result['source_url'] = f"https://www.douyin.com/video/{video_id}"
-        elif platform == 'bilibili':
-            video_id = mod.resolve_bvid(url, session)
-            result['source_url'] = f"https://www.bilibili.com/video/{video_id}"
-        
-        result['video_id'] = video_id
+        # 使用 context manager 确保 session 正确关闭
+        with mod.build_session(cookie_file) as session:
+            # 解析 video_id
+            if platform == 'kuaishou':
+                video_id = mod.resolve_photo_id(url, session)
+                result['source_url'] = f"https://www.kuaishou.com/short-video/{video_id}"
+            elif platform == 'douyin':
+                video_id = mod.resolve_video_id(url, session)
+                result['source_url'] = f"https://www.douyin.com/video/{video_id}"
+            elif platform == 'bilibili':
+                video_id = mod.resolve_bvid(url, session)
+                result['source_url'] = f"https://www.bilibili.com/video/{video_id}"
+            
+            result['video_id'] = video_id
         
     except Exception as e:
         result['error'] = str(e)
