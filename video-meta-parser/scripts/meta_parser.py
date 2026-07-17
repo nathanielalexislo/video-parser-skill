@@ -263,6 +263,54 @@ def parse_meta(platform: str, url: str, scripts_dir: str,
     return to_unified_meta(platform, info, transcription)
 
 
+def resolve_url_only(url: str, cookies_dir: str, scripts_dir: str) -> dict:
+    """仅解析短链接获取 video_id 和 source_url，不下载视频
+    
+    Returns:
+        dict: {
+            'url': str,
+            'video_id': str | None,
+            'source_url': str | None,
+            'platform': str | None,
+            'error': str | None
+        }
+    """
+    result = {
+        'url': url,
+        'video_id': None,
+        'source_url': None,
+        'platform': None,
+        'error': None
+    }
+    
+    try:
+        platform = detect_platform(url)
+        result['platform'] = platform
+        cookie_file = find_cookie(cookies_dir, platform)
+        
+        # 动态加载平台模块
+        mod = load_module(scripts_dir, platform)
+        session = mod.build_session(cookie_file)
+        
+        # 解析 video_id
+        if platform == 'kuaishou':
+            video_id = mod.resolve_photo_id(url, session)
+            result['source_url'] = f"https://www.kuaishou.com/short-video/{video_id}"
+        elif platform == 'douyin':
+            video_id = mod.resolve_video_id(url, session)
+            result['source_url'] = f"https://www.douyin.com/video/{video_id}"
+        elif platform == 'bilibili':
+            video_id = mod.resolve_bvid(url, session)
+            result['source_url'] = f"https://www.bilibili.com/video/{video_id}"
+        
+        result['video_id'] = video_id
+        
+    except Exception as e:
+        result['error'] = str(e)
+    
+    return result
+
+
 def process_single_url(url: str, output_dir: str, cookies_dir: str, scripts_dir: str,
                        whisper_model: str, hf_endpoint: str) -> dict:
     """处理单个 URL，返回结果摘要
@@ -377,41 +425,133 @@ def process_batch(urls: list[str], output_dir: str, cookies_dir: str, scripts_di
 
 def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir: str,
                 whisper_model: str, hf_endpoint: str, concurrent: int, batch_size: int) -> dict:
-    """分批处理所有 URL
+    """分批处理所有 URL（两阶段：先解析去重，再处理唯一视频）
     
     Returns:
         dict: 汇总报告 {
-            'total': int,
-            'success': int,
-            'failed': int,
-            'results': list[dict]
+            'total_urls': int,           # 输入的总 URL 数
+            'unique_videos': int,         # 去重后的唯一视频数
+            'success': int,               # 成功处理的视频数
+            'failed': int,                # 失败的视频数
+            'results': list[dict]         # 每个唯一视频的处理结果
         }
     """
-    # 去重
-    unique_urls = list(dict.fromkeys(urls))  # 保持顺序的去重
+    # 基于 URL 字符串去重（保持顺序）
+    unique_urls = list(dict.fromkeys(urls))
     if len(unique_urls) < len(urls):
-        print(f"去重: {len(urls)} -> {len(unique_urls)} 个 URL")
+        print(f"URL 去重: {len(urls)} -> {len(unique_urls)} 个")
     
-    # 分批
-    batches = [unique_urls[i:i+batch_size] for i in range(0, len(unique_urls), batch_size)]
+    print(f"\n=== 阶段 1: 解析短链接 (并发 {concurrent}) ===")
+    
+    # 阶段 1: 并发解析所有短链接获取 video_id
+    resolve_results = []
+    completed = 0
+    
+    with ThreadPoolExecutor(max_workers=concurrent) as executor:
+        future_to_url = {
+            executor.submit(resolve_url_only, url, cookies_dir, scripts_dir): url
+            for url in unique_urls
+        }
+        
+        for future in as_completed(future_to_url):
+            url = future_to_url[future]
+            try:
+                result = future.result()
+                resolve_results.append(result)
+                completed += 1
+                
+                # 打印进度
+                if result['video_id']:
+                    print(f"  [{completed}/{len(unique_urls)}] ✓ {url} -> {result['video_id']}")
+                else:
+                    print(f"  [{completed}/{len(unique_urls)}] ✗ {url} -> 解析失败")
+                    if result['error']:
+                        print(f"         错误: {result['error'][:80]}")
+            except Exception as e:
+                resolve_results.append({
+                    'url': url,
+                    'video_id': None,
+                    'source_url': None,
+                    'platform': None,
+                    'error': f'Unexpected error: {str(e)}'
+                })
+                completed += 1
+                print(f"  [{completed}/{len(unique_urls)}] ✗ {url} -> Unexpected error")
+    
+    # 基于 video_id 去重，构建映射关系
+    video_id_to_urls = {}  # video_id -> [urls]
+    failed_urls = []        # 解析失败的 URLs
+    
+    for result in resolve_results:
+        if result['video_id']:
+            vid = result['video_id']
+            if vid not in video_id_to_urls:
+                video_id_to_urls[vid] = {
+                    'video_id': vid,
+                    'source_url': result['source_url'],
+                    'platform': result['platform'],
+                    'urls': []
+                }
+            video_id_to_urls[vid]['urls'].append(result['url'])
+        else:
+            failed_urls.append(result)
+    
+    print(f"\n解析完成:")
+    print(f"  唯一视频数: {len(video_id_to_urls)}")
+    print(f"  解析失败数: {len(failed_urls)}")
+    
+    # 阶段 2: 处理唯一的视频
+    print(f"\n=== 阶段 2: 处理唯一视频 (并发 {concurrent}) ===")
+    
+    # 分批处理
+    unique_video_ids = list(video_id_to_urls.keys())
+    batches = [unique_video_ids[i:i+batch_size] for i in range(0, len(unique_video_ids), batch_size)]
     total_batches = len(batches)
     
-    print(f"\n总计: {len(unique_urls)} 个 URL，分 {total_batches} 批处理")
-    
-    # 处理所有批次
     all_results = []
-    for i, batch in enumerate(batches, 1):
-        batch_results = process_batch(batch, output_dir, cookies_dir, scripts_dir,
+    for batch_num, batch_video_ids in enumerate(batches, 1):
+        print(f"\n--- 批次 {batch_num}/{total_batches} ({len(batch_video_ids)} 个视频) ---")
+        
+        # 为每个 video_id 选择一个代表性的 URL 来处理
+        batch_urls = []
+        for vid in batch_video_ids:
+            # 选择第一个 URL 作为代表
+            representative_url = video_id_to_urls[vid]['urls'][0]
+            batch_urls.append(representative_url)
+        
+        # 并发处理这一批
+        batch_results = process_batch(batch_urls, output_dir, cookies_dir, scripts_dir,
                                      whisper_model, hf_endpoint, concurrent,
-                                     i, total_batches)
+                                     batch_num, total_batches)
+        
+        # 将映射关系添加到结果中
+        for result in batch_results:
+            if result['video_id'] and result['video_id'] in video_id_to_urls:
+                result['all_urls'] = video_id_to_urls[result['video_id']]['urls']
+            else:
+                result['all_urls'] = [result['url']]
+        
         all_results.extend(batch_results)
+    
+    # 添加解析失败的 URLs 到结果中
+    for failed in failed_urls:
+        all_results.append({
+            'url': failed['url'],
+            'video_id': None,
+            'source_url': None,
+            'success': False,
+            'meta_path': None,
+            'error': failed['error'],
+            'all_urls': [failed['url']]
+        })
     
     # 生成汇总报告
     success_count = sum(1 for r in all_results if r['success'])
     failed_count = len(all_results) - success_count
     
     summary = {
-        'total': len(all_results),
+        'total_urls': len(urls),
+        'unique_videos': len(video_id_to_urls),
         'success': success_count,
         'failed': failed_count,
         'results': all_results
@@ -425,8 +565,9 @@ def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir:
     
     # 打印最终汇总
     print(f"\n=== 批量处理完成 ===")
-    print(f"总计: {summary['total']} 个 URL")
-    print(f"成功: {summary['success']}")
+    print(f"输入 URL 总数: {summary['total_urls']}")
+    print(f"唯一视频数: {summary['unique_videos']}")
+    print(f"成功处理: {summary['success']}")
     print(f"失败: {summary['failed']}")
     print(f"汇总报告: {summary_path}")
     

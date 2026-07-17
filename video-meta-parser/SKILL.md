@@ -77,18 +77,23 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
 - `--hf-endpoint` 指定 Hugging Face endpoint（可选，用于加速模型下载）
 
 **批量处理特性：**
-- 自动去重：基于 URL 字符串去重，避免重复处理
+- **两阶段处理**：
+  - 阶段 1：并发解析所有短链接，获取 `video_id` 和 `source_url`
+  - 阶段 2：基于 `video_id` 去重，只对唯一的视频执行元信息解析、下载和转录
+- 自动去重：基于 `video_id` 去重，多个短链指向同一视频时只处理一次
 - 分批处理：按 `--batch-size` 分批，每批内并发处理
-- 进度显示：实时显示每个 URL 的处理状态（✓ 成功 / ✗ 失败）
+- 进度显示：实时显示每个阶段的处理状态（✓ 成功 / ✗ 失败）
 - 错误隔离：单个 URL 失败不影响其他 URL 的处理
-- 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果和映射关系
+- 映射记录：`batch_summary.json` 中记录每个视频对应的所有短链
+- 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果
 
 **batch_summary.json 结构：**
 
 ```json
 {
-  "total": 150,
-  "success": 142,
+  "total_urls": 150,
+  "unique_videos": 142,
+  "success": 134,
   "failed": 8,
   "results": [
     {
@@ -97,7 +102,12 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
       "source_url": "https://www.douyin.com/video/123456",
       "success": true,
       "meta_path": "/path/to/元信息.json",
-      "error": null
+      "error": null,
+      "all_urls": [
+        "https://v.douyin.com/xxx",
+        "https://v.douyin.com/aaa",
+        "https://v.douyin.com/bbb"
+      ]
     },
     {
       "url": "https://v.kuaishou.com/yyy",
@@ -105,13 +115,19 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
       "source_url": null,
       "success": false,
       "meta_path": null,
-      "error": "视频不存在"
+      "error": "视频不存在",
+      "all_urls": [
+        "https://v.kuaishou.com/yyy"
+      ]
     }
   ]
 }
 ```
 
-**注意：** 多个短链可能映射到同一个 `source_url` 和 `video_id`，`results` 数组中会保留所有原始短链的映射关系。
+**注意：** 
+- `total_urls` 是输入的短链总数，`unique_videos` 是去重后的唯一视频数
+- `all_urls` 字段记录了所有指向该视频的短链（多个短链可能映射到同一个 `video_id`）
+- 只有唯一的视频会被下载和处理，避免重复工作
 
 ### 单 URL 模式的输出
 
