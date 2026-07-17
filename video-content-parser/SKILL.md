@@ -1,118 +1,68 @@
 ---
 name: video-content-parser
 description: >
-  视频内容描述生成技能，支持抖音/快手/哔哩哔哩。基于 video-meta-parser 已下载的视频和转录结果，
-  通过关键帧分析生成视频内容描述。
-  当用户提到 分析视频内容、视频摘要、生成视频内容描述，
-  或已经通过 video-meta-parser 完成视频下载后需要进一步处理时，务必使用本技能。
-  若用户只给了视频短链还没有下载视频，应先用 video-meta-parser 解析元信息并下载视频。
+  基于 video-meta-parser 已下载的视频和转录结果，提取受控数量的关键帧，生成结合画面、
+  画面文字和音频转录的视频内容描述。用于抖音、快手、哔哩哔哩视频的画面分析、内容摘要、
+  逐段描述或视频内容描述生成。若只有链接，先使用 video-meta-parser；若只需元信息、下载或
+  音频转录，不使用本技能。
 ---
 
-# 视频内容描述生成
+# 视频内容解析
 
-支持抖音、快手、哔哩哔哩三个平台。基于 `video-meta-parser` 已下载的视频和转录结果，
-提取关键帧并生成内容描述。
+## 前置输入
 
-> **前置条件：** 本技能依赖 `video-meta-parser` 的输出。
-> 
-> `video-meta-parser` 会在 `<output-dir>/<id>/` 下生成：
-> - `视频文件.mp4` — 下载的视频
-> - `_analysis/audio.wav` — 提取的音频（可选）
-> - `元信息.json` — 元信息（含 `transcription` 字段）
-> 
-> 若用户只提供了原始短链，请先运行 `video-meta-parser` 完成下载和转录。
+- 使用 `video-meta-parser` 单项结果中 `meta_path` 的父目录作为 `<SAVE_DIR>`；不要自行拼接视频 ID 路径。
+- `<SAVE_DIR>/视频文件.mp4` 必须存在。
+- `<SAVE_DIR>/元信息.json` 可选；缺失或没有转录时仍可进行画面分析。
+- 若用户只提供链接，先运行 `video-meta-parser`，再处理元信息成功且视频文件真实存在的项目。
 
 ## 工作流程
 
-### Step 1: 准备分析素材
+### 1. 准备分析素材
 
-运行分析脚本，输入 `video-meta-parser` 创建的保存目录：
+运行：
 
 ```bash
 python3 <skill-path>/scripts/analyze_video.py "<SAVE_DIR>"
 ```
 
-- `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
-- `<SAVE_DIR>` 是 `video-meta-parser` 创建的保存目录（如 `<workspace>/videos/<id>/`）
+- `--frame-interval <秒>`：最小采样间隔，默认 2 秒。
+- `--max-frames <数量>`：最大关键帧数，默认 60、硬上限 300。长视频会自动增大实际间隔。
+- 成功后读取 `<SAVE_DIR>/_analysis/analysis.json`。其中 `frames` 是需要查看的最终帧集，时间范围以每项的 `start`/`end` 为准；`transcription` 为音频转录或 `null`。
+- 命令返回非零状态时停止，不读取或复用旧分析结果，并向用户报告具体错误。
 
-可选参数：
-- `--frame-interval <秒数>`：帧提取间隔，默认 2 秒
+### 2. 生成内容描述
 
-该脚本会：
-1. 查找 `<SAVE_DIR>/视频文件.mp4`（由 `video-meta-parser` 下载）
-2. 用 ffprobe 获取视频时长、分辨率等基本信息
-3. 用 ffmpeg 每 N 秒提取一帧关键帧截图（默认每 2 秒）
-4. 读取 `<SAVE_DIR>/元信息.json` 中的 `transcription` 字段（由 `video-meta-parser` 转录）
-5. 在 `<SAVE_DIR>/_analysis/` 目录下保存关键帧截图和 `analysis.json`
+1. 读取 `analysis.json`，使用当前环境可用的图像查看工具查看 `frames` 中的全部图片。
+2. 按时间描述人物、场景、动作、镜头变化和可辨认的画面文字；不要臆测看不到或听不到的信息。
+3. 将 `transcription.segments` 作为音频转录。若为 `null`，明确标记“无可用音频转录”，不要补写对白。
+4. 综合画面与音频生成概述，并保存为 `<SAVE_DIR>/视频内容描述.txt`。
+5. 不要重新读取 `元信息.json`；以 `analysis.json` 为本阶段唯一数据来源。
 
-`analysis.json` 结构：
-
-```json
-{
-  "video_info": {
-    "duration": 120.5,
-    "width": 1920,
-    "height": 1080,
-    ...
-  },
-  "frames": [
-    {"start": 0, "end": 2, "path": "<SAVE_DIR>/_analysis/frame_001.jpg"},
-    {"start": 2, "end": 4, "path": "<SAVE_DIR>/_analysis/frame_002.jpg"},
-    ...
-  ],
-  "transcription": {
-    "language": "zh",
-    "language_prob": 0.99,
-    "segments": [
-      {"start": 0.0, "end": 3.5, "text": "大家好"},
-      {"start": 3.5, "end": 6.2, "text": "今天我们来讲讲"},
-      ...
-    ]
-  }
-}
-```
-
-### Step 2: 生成视频内容描述
-
-基于 Step 1 准备的分析素材，按固定结构生成视频内容描述：
-
-1. 用 Read 工具逐个读取 `_analysis/` 目录下的帧截图（路径在 `analysis.json` 的 `frames` 字段中）
-2. 为每个关键帧生成描述，包括时间段和画面内容，形成**关键帧转录**
-3. 保留 `analysis.json` 中的 `transcription` 数据作为**音频转录**
-4. 基于关键帧转录 + 音频转录的内容（忽略时间区间），生成一段**概述**
-5. 按以下结构整合为最终描述文档，保存为 `<SAVE_DIR>/视频内容描述.txt`：
+使用以下结构：
 
 ```
 视频内容详细描述
 ==================
 
 【概述】
-<一段话概括视频内容，基于关键帧转录 + 音频转录总结，可忽略时间区间>
+<综合画面和音频的一段话概述>
 
 【关键帧转录】
 ▸ [<start>s - <end>s]
   画面：<画面描述>
-  文字叠加：<画面上的文字>
-  ...
+  文字叠加：<可辨认文字；没有则写“无”>
 
 【音频转录】
-  [<start>s - <end>s] <转录文本>
-  ...
+  [<start>s - <end>s] <转录文本；无转录时明确标记>
 ```
 
-**注意：**
-- 关键帧转录的时间段与 `analysis.json` 中 `frames` 的 `start`/`end` 对应
-- 音频转录的时间段与 `analysis.json` 中 `transcription.segments` 的 `start`/`end` 对应
-- **不要读取 `元信息.json`**，所有需要的信息都已包含在 `analysis.json` 中
+## 完成条件
+
+- 仅在 `视频内容描述.txt` 已成功写入时报告完成，并给出文件路径和实际关键帧数。
+- 批量处理时逐项运行；单项失败不影响其他项目，但必须逐项列出失败原因。
+- 关键帧准备失败时不要退化成纯音频结果，除非用户明确接受纯音频摘要。
 
 ## 依赖
 
-- **ffmpeg / ffprobe**: 视频处理（帧提取）
-
-## 错误处理
-
-- 如果 `<SAVE_DIR>/视频文件.mp4` 不存在，脚本会提示先使用 `video-meta-parser` 下载视频，流程中止
-- 如果 `<SAVE_DIR>/元信息.json` 不存在或读取失败，`transcription` 字段为 null
-- 如果 `<SAVE_DIR>/元信息.json` 中 `transcription` 字段为 null，脚本会打印提示信息
-- 如果视频文件损坏或无法读取，脚本会在获取视频信息时失败并抛出异常，流程中止
-- 如果 ffmpeg 不可用或执行失败，脚本会在帧提取步骤失败，但脚本仍会继续执行，`frames` 字段为空列表
+- `ffmpeg` 和 `ffprobe`

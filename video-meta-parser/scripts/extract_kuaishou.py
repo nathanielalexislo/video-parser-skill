@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-快手视频元信息提取（纯提取，不下载视频）。
-被 video-meta-parser/scripts/meta_parser.py 动态加载。
+快手视频元信息独立提取脚本（不下载视频）。
 """
+
+from __future__ import annotations
 
 import re
 import os
@@ -16,6 +17,7 @@ MOBILE_UA = (
     "AppleWebKit/605.1.15 (KHTML, like Gecko) "
     "Version/16.0 Mobile/15E148 Safari/604.1"
 )
+REQUEST_TIMEOUT = (10, 30)
 
 
 def build_session(cookie_file: str | None = None) -> requests.Session:
@@ -47,7 +49,7 @@ def resolve_photo_id(url: str, session: requests.Session) -> str:
         return url
 
     if 'v.kuaishou.com' in url or 'v.m.chenzhongtech.com' in url:
-        resp = session.get(url, allow_redirects=True)
+        resp = session.get(url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
         if resp.status_code >= 400:
             raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
         url = resp.url
@@ -66,7 +68,7 @@ def resolve_photo_id(url: str, session: requests.Session) -> str:
 def extract_video_info(photo_id: str, session: requests.Session) -> dict:
     """通过移动端页面提取视频直链及完整元信息"""
     page_url = f"https://v.m.chenzhongtech.com/fw/photo/{photo_id}"
-    resp = session.get(page_url, allow_redirects=True)
+    resp = session.get(page_url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     html = resp.text
 

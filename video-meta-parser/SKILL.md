@@ -1,63 +1,33 @@
 ---
 name: video-meta-parser
 description: >
-  视频元信息解析技能，支持抖音/快手/哔哩哔哩。支持单 URL 或批量处理模式。
-  输入视频短链（或包含多个短链的文件），解析元信息、下载视频、转录音频。
-  三平台的短链最终转化成含义一致的元信息结构：
-  id、title、desc、publish_time、play_count、like_count、comment_count、share_count、author、source_url、
-  transcription、success、fail_reason。
-  当用户提到 解析视频元信息、获取视频信息、视频作者/点赞/播放数据、下载视频、音频转录，
-  或者粘贴了抖音(v.douyin.com)、快手(v.kuaishou.com)、B站(b23.tv/bilibili.com)链接需要提取信息时，
-  务必使用本技能。若用户还需要生成视频内容描述，再配合 video-content-parser 技能。
+  解析抖音、快手、哔哩哔哩的单个或批量视频链接，统一提取元信息、下载视频并转录音频。
+  当用户提供或明确提及抖音（v.douyin.com/douyin.com）、快手（v.kuaishou.com/kuaishou.com）、
+  B站（b23.tv/bilibili.com/BV 号）的链接，或者可直接识别的 BVID，并要求解析元信息、作者、播放/点赞数据、
+  下载视频或音频转录时使用。不要因为泛化的“下载视频”或“音频转录”请求而对其他平台或本地文件触发本技能。
+  如果还需要生成视频画面和内容描述，再配合 video-content-parser。
 ---
 
 # 视频元信息解析
 
-支持抖音、快手、哔哩哔哩三个平台的短视频链接，支持单 URL 或批量处理模式，完成视频短链 → 元信息解析 → 视频下载 → 音频转录的完整流程。
-本技能会下载视频并转录音频，但不生成内容描述（那是 `video-content-parser` 的职责）。
+使用 `scripts/meta_parser.py` 完成视频 ID 解析、元信息提取、视频下载和音频转录。本技能不生成视频画面内容描述。
 
-## 统一元信息结构
+## 运行
 
-三平台不同的短链，最终转化成同一套字段（命名、顺序、含义完全一致）：
-
-| 字段 | 含义 | 抖音来源 | 快手来源 | B站来源 |
-|------|------|----------|----------|---------|
-| `id` | 视频唯一 ID | aweme_id | photoId | BVID |
-| `title` | 标题 | 标题 | 标题 | 标题 |
-| `desc` | 内容描述 | desc | caption | desc |
-| `publish_time` | 发布时间（北京时间） | create_time | timestamp | pubdate |
-| `play_count` | 播放次数 | play_count | viewCount | view |
-| `like_count` | 点赞数 | digg_count | likeCount | like |
-| `comment_count` | 评论数 | comment_count | commentCount | reply |
-| `share_count` | 分享数 | share_count | shareCount | share |
-| `author` | 作者名称 | nickname | userName | owner.name |
-| `source_url` | 规范化长链接 | douyin.com/video/{id} | kuaishou.com/short-video/{id} | bilibili.com/video/{id} |
-| `transcription` | 音频转录结果（含语言、置信度、分段文本） | whisper | whisper | whisper |
-| `success` | 是否成功 | true | true | true |
-| `fail_reason` | 失败原因（成功时为空字符串） | '' | '' | '' |
-
-## 工作流程
-
-脚本支持两种模式：单 URL 模式和批量处理模式。
-
-### 单 URL 模式
-
-处理单个视频链接：
+处理单个链接：
 
 ```bash
-python3 <skill-path>/scripts/meta_parser.py "<用户提供的URL>" \
+python3 <skill-path>/scripts/meta_parser.py "<URL>" \
   --output-dir <workspace>/videos \
   --cookies-dir <workspace> \
   --whisper-model base \
   --hf-endpoint https://hf-mirror.com
 ```
 
-### 批量处理模式
-
-处理多个视频链接（从文件中读取）：
+处理批量链接：
 
 ```bash
-python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
+python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件> \
   --output-dir <workspace>/videos \
   --cookies-dir <workspace> \
   --concurrent 8 \
@@ -66,234 +36,100 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
   --hf-endpoint https://hf-mirror.com
 ```
 
-**参数说明：**
-- `<skill-path>` 是本 skill 的安装路径（即 SKILL.md 所在目录）
-- `<workspace>` 是用户当前工作区路径
-- `--input-file` 批量输入文件路径（每行一个 URL，支持 `#` 开头的注释行）
-- `--concurrent` 并发数，默认 8（可根据机器性能调整）
-- `--batch-size` 每批大小，默认 100
-- `--cookies-dir` 指向包含 cookie 文件的目录，脚本会自动查找 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`
-- `--whisper-model` 指定 Whisper 模型名称（默认: base，可选: tiny, small, medium, large）
-- `--hf-endpoint` 指定 Hugging Face endpoint（可选，用于加速模型下载）
+一键重试已有产物中的网络类失败，并把成功改善的记录合并回原产物：
 
-**批量处理特性：**
-- **两阶段处理**（两阶段都有并发和分批能力）：
-  - 阶段 1：分批并发解析所有短链接，获取 `video_id` 和 `source_url`
-  - 阶段 2：基于 `video_id` 去重，分批并发处理唯一视频（元信息解析、下载、转录）
-- 自动去重：基于 `video_id` 去重，多个短链指向同一视频时只处理一次
-- 进度显示：实时显示每个批次的处理状态（✓ 成功 / ✗ 失败）
-- 错误隔离：单个 URL 失败不影响其他 URL 的处理
-- **3 个产出文件**：
-  1. `mapping.jsonl` — 短链映射关系（JSONL 格式，每行一个映射）
-  2. `batch_summary.json` — video_id 去重后的处理结果
-  3. `progress.json` — 两个阶段的进度统计
-
-**产出文件 1: mapping.jsonl**
-
-JSONL 格式（每行一个 JSON 对象），记录所有短链到 video_id 的映射关系：
-
-```jsonl
-{"short_url": "https://v.douyin.com/xxx", "video_id": "123456", "source_url": "https://www.douyin.com/video/123456", "success": true}
-{"short_url": "https://v.douyin.com/aaa", "video_id": "123456", "source_url": "https://www.douyin.com/video/123456", "success": true}
-{"short_url": "https://v.douyin.com/bbb", "video_id": "123456", "source_url": "https://www.douyin.com/video/123456", "success": true}
-{"short_url": "https://v.kuaishou.com/yyy", "video_id": null, "source_url": null, "success": false, "error": "视频不存在"}
+```bash
+python3 <skill-path>/scripts/meta_parser.py \
+  --retry-from <output-dir> \
+  --cookies-dir <workspace> \
+  --concurrent 8 \
+  --batch-size 100 \
+  --whisper-model base \
+  --hf-endpoint https://hf-mirror.com
 ```
 
-**产出文件 2: batch_summary.json**
+- URL 文件每行一个链接，忽略空行和以 `#` 开头的注释。
+- `--cookies-dir` 中可放置 `cookies-douyin.txt`、`cookies-kuaishou.txt`、`cookies-bilibili.txt`；缺失时匿名访问。
+- `--whisper-model` 默认为 `base`，可使用 `tiny`、`small`、`medium`、`large`。
+- `--concurrent` 默认为 8。大模型或 CPU/内存受限时降低并发数。
 
-video_id 去重后的处理结果（只包含阶段 2 处理的唯一视频，不包含阶段 1 解析失败的短链）：
+## 批量流程
 
-```json
-[
-  {
-    "url": "https://v.douyin.com/xxx",
-    "video_id": "123456",
-    "source_url": "https://www.douyin.com/video/123456",
-    "success": true,
-    "meta_path": "/path/to/元信息.json",
-    "error": null,
-    "all_urls": [
-      "https://v.douyin.com/xxx",
-      "https://v.douyin.com/aaa",
-      "https://v.douyin.com/bbb"
-    ]
-  },
-  {
-    "url": "https://v.kuaishou.com/zzz",
-    "video_id": "789012",
-    "source_url": "https://www.kuaishou.com/short-video/789012",
-    "success": false,
-    "meta_path": null,
-    "error": "视频已删除",
-    "all_urls": [
-      "https://v.kuaishou.com/zzz"
-    ]
-  }
-]
+1. 并发解析输入链接，生成 `video_id` 和规范化 `source_url`。
+2. 按“平台 + `video_id`”去重，处理每个唯一视频。不要在外部预解析或重复调用短链。
+3. 保留所有原始链接到唯一视频的映射。单个链接失败不中断其他任务。
+
+## 统一元信息
+
+每个 `meta_path` 指向的 `元信息.json` 使用以下字段：
+
+| 字段 | 含义 |
+|---|---|
+| `id` | 抖音 aweme_id、快手 photoId 或 BVID |
+| `title` / `desc` | 标题和内容描述 |
+| `publish_time` | 北京时间 |
+| `play_count` / `like_count` / `comment_count` / `share_count` | 统一的互动数据 |
+| `author` | 作者名称 |
+| `source_url` | 规范化长链 |
+| `transcription` | 语言、置信度和分段文本；下载、音频提取或转录失败时为 `null` |
+| `metadata_success` / `download_success` | 元信息、视频下载阶段是否成功 |
+| `audio_extract_success` / `transcription_success` | 音频提取、音频转录阶段是否成功 |
+| `stage_errors` | `metadata`、`download`、`audio_extract`、`transcription` 各阶段错误；无错误时为空字符串 |
+| `stage_retryable` | 各阶段是否属于可重试网络错误；`true/false` 为已判定，`null` 为没有明确判定 |
+| `success` | 只表示视频 ID 和平台元信息解析成功，不代表下载和转录都成功 |
+| `fail_reason` | 元信息解析失败原因；成功时为空字符串 |
+
+## 产出
+
+单 URL 模式：
+
+```text
+<output-dir>/<id>/
+├── 元信息.json
+├── 视频文件.mp4           # 下载成功时
+└── _analysis/audio.wav  # 音频提取成功时
 ```
 
-**说明：**
-- 包含所有在阶段 2 处理的唯一视频（无论成功或失败）
-- 不包含阶段 1 解析失败的短链（无法获取 video_id 的）
-- `all_urls` 字段记录所有指向该视频的短链
+批量模式：
 
-**产出文件 3: progress.json**
-
-两个阶段的详细进度统计：
-
-```json
-{
-  "phase1_resolve": {
-    "total": 150,
-    "completed": 150,
-    "success": 148,
-    "failed": 2,
-    "unique_videos": 142
-  },
-  "phase2_process": {
-    "total": 142,
-    "completed": 142,
-    "success": 134,
-    "failed": 8
-  }
-}
-```
-
-**字段说明：**
-- `phase1_resolve.total` — 去重后的短链总数（输入）
-- `phase1_resolve.success` — 成功解析出 video_id 的短链数
-- `phase1_resolve.failed` — 解析失败的短链数（无法获取 video_id）
-- `phase1_resolve.unique_videos` — 去重后的唯一视频数
-- `phase2_process.total` — 需要处理的唯一视频数（等于 phase1_resolve.unique_videos）
-- `phase2_process.success` — 成功处理的视频数（元信息+下载+转录）
-- `phase2_process.failed` — 处理失败的视频数
-
-**注意：** 
-- `mapping.jsonl` 包含所有短链（包括阶段 1 解析失败的）
-- `batch_summary.json` 只包含阶段 2 处理的唯一视频（包括成功和失败的，但不包括阶段 1 解析失败的短链）
-- `all_urls` 字段记录了所有指向该视频的短链（多个短链可能映射到同一个 `video_id`）
-- 只有唯一的视频会被下载和处理，避免重复工作
-
-### 单 URL 模式的输出
-
-脚本执行后会有三种情况：
-
-**情况一：元信息解析成功** (`success=true`)
-
-以 `<id>` 为父目录创建 `<workspace>/videos/<id>/`，至少包含：
-- `元信息.json` — 完整元信息（`transcription` 字段可能为 null，如果下载或转录失败）
-
-如果视频下载和音频转录也成功，还会包含：
-- `视频文件.mp4` — 下载的视频
-- `_analysis/audio.wav` — 提取的音频
-
-末尾打印：
-
-```
-SUCCESS=true
-ID=<视频ID>
-SOURCE_URL=<source_url>
-META_JSON=<元信息.json 路径>
-```
-
-**情况二：ID 解析成功，但元信息获取失败**
-
-仍以 `<id>` 为父目录创建 `<workspace>/videos/<id>/元信息.json`，其中 `id` 和 `source_url` 会被填充，其他字段为空（字符串字段为空字符串，数值字段为 0），`success` 为 false。末尾打印：
-
-```
-SUCCESS=false
-ID=<视频ID>
-SOURCE_URL=<source_url>
-META_JSON=<元信息.json 路径>
-```
-
-**情况三：ID 解析失败**
-
-不创建任何目录或文件，只打印错误信息：
-
-```
-SUCCESS=false
-```
-
-## 汇报结果
-
-根据 `success` 字段和输出信息向用户报告：
-
-**元信息解析成功时** (`success=true`)：
-- 元信息保存位置（`<id>/元信息.json`）
-- 视频基本信息（作者、标题、发布时间、播放/点赞/评论/分享数据表格）
-- 如果视频文件存在，报告视频文件位置（`<id>/视频文件.mp4`）
-- 如果音频文件存在，报告音频文件位置（`<id>/_analysis/audio.wav`）
-- 如果 `transcription` 不为 null，报告转录摘要：语言、段落数
-- 如需生成内容描述，提示可用 `video-content-parser`，并把 `SAVE_DIR`（即 `<workspace>/videos/<id>/`）传给它
-
-**ID 解析成功但元信息获取失败时** (`success=false` 但输出了 `ID=`)：
-- 报告 `fail_reason` 中的错误原因
-- 说明已创建 `<id>/元信息.json`，其中包含视频 ID 和规范化长链接
-- 本次元信息解析流程中止，不做其他尝试
-
-**ID 解析失败时** (`success=false` 且未输出 `ID=`)：
-- 报告 `fail_reason` 中的错误原因
-- 说明未创建任何文件
-- 本次元信息解析流程中止，不做其他尝试
-
-### 批量模式的输出
-
-批量处理完成后，会生成以下文件和目录结构：
-
-```
+```text
 <output-dir>/
-├── batch_summary.json          # 汇总报告（含所有 URL 的处理结果和映射关系）
-├── <video_id_1>/
-│   ├── 元信息.json
-│   ├── 视频文件.mp4
-│   └── _analysis/
-│       └── audio.wav
-├── <video_id_2>/
-│   └── ...
-└── <video_id_N>/
-    └── ...
+├── mapping.jsonl
+├── batch_summary.json
+├── progress.json
+└── <video_id>/...          # 跨平台 ID 冲突时为 <platform>_<video_id>/
 ```
 
-**注意：** 多个短链可能映射到同一个 `video_id`，因此不会重复下载，多个短链会在 `batch_summary.json` 的 `results` 数组中指向同一个目录。
+- `mapping.jsonl`：每个去重后的输入 URL 到 `video_id/source_url` 的映射，包含阶段 1 失败项。
+- `batch_summary.json`：顶层为 JSON 数组，每个唯一视频一项；包含 URL、路径、四个阶段状态、`stage_errors`、`stage_retryable` 和 `all_urls`。不包含阶段 1 失败项。
+- `progress.json`：包含 `phase1_resolve` 和 `phase2_process` 计数；`phase2_process.stages` 按阶段提供 `attempted/success/failed/skipped`。
 
-### 批量模式的汇报
+## 错误语义
 
-批量处理完成后，向用户报告：
-- 总计处理的 URL 数量（去重后）
-- 成功/失败的 URL 数量
-- 汇总报告文件位置（`batch_summary.json`）
-- 如有失败的 URL，列出前几个失败原因（可参考 `batch_summary.json` 中的 `results` 数组）
-- 如需生成内容描述，提示可用 `video-content-parser`，并说明需要对每个成功的 `<id>` 目录分别运行
+- 如果 ID 和元信息解析成功，始终保存 `元信息.json`。后续下载或转录失败不改变 `success=true`，但 `transcription=null`，且相应媒体文件可能缺失。
+- 如果已解析 ID 但元信息失败，保存含 `id`、`source_url` 和 `fail_reason` 的失败元信息文件。
+- 如果 ID 解析失败，不创建视频目录；批量模式将失败记入 `mapping.jsonl` 并继续。
+- 网络、平台访问或单个视频错误不中断批量中的其他视频。
+- 单个直连流保留 60 秒无数据超时，并限制为最长 30 分钟、最大 4 GiB；触发边界后记录下载阶段失败并继续下一个视频。
 
-### 批量模式的错误处理
+## 失败重试
 
-- 批量模式下，单个 URL 失败不会中断整个批次，其他 URL 会继续处理
-- 失败的 URL 会被记录在 `batch_summary.json` 的 `results` 数组中，包含 `error` 字段
-- 即使部分 URL 失败，成功的 URL 仍会生成完整的输出文件（元信息、视频、音频）
-- 如果所有 URL 都失败，仍会生成 `batch_summary.json`，但不会创建任何视频目录
+- 任务结束后，先查看 `progress.json` 判断失败量级；确认需要重试时运行 `--retry-from <output-dir>`。
+- 重试命令优先读取 `stage_retryable`，仅选择超时、连接中断、限流、5xx、不完整下载等网络类错误；旧产物没有该字段时才保守分析错误文本。跳过权限、Cookie、内容下架、平台不支持、文件超限或其他确定性错误。
+- 重试先写入隔离目录。只有目标阶段成功且结果比原记录更完整时，才用可恢复事务一起替换媒体目录、`mapping.jsonl`、`batch_summary.json` 和 `progress.json`；失败或中断时恢复旧产物，失败重试不覆盖原记录。
+- 合并后重新计算所有阶段统计，并保持跨平台同 ID 的原目录映射。
 
-## 平台适配说明
+## 汇报
 
-| 平台 | URL 特征 | 元信息来源 | cookie 文件 |
-|------|----------|-----------|-------------|
-| 快手 | `v.kuaishou.com`、`kuaishou.com/short-video`、`chenzhongtech.com` | 移动端页面提取 | `cookies-kuaishou.txt` |
-| 抖音 | `v.douyin.com`、`douyin.com/video`、`iesdouyin.com` | 分享页 `_ROUTER_DATA` | `cookies-douyin.txt` |
-| B站 | `b23.tv`、`bilibili.com/video`、`BV` 开头的 ID | B站 API | `cookies-bilibili.txt` |
+- 先按阶段报告成功、失败和跳过数量及产出路径。
+- 元信息成功时，报告作者、标题、发布时间和播放/点赞/评论/分享数据。
+- 仅在对应文件真实存在时报告视频和音频路径。
+- 仅在 `transcription` 非 `null` 时报告语言和分段数。
+- 列出失败原因，不要把 `success=true` 误报为下载或转录成功。
+- 如果用户还需要画面内容描述，只对 `download_success=true`、`meta_path` 有效且其父目录中 `视频文件.mp4` 真实存在的项目调用 `video-content-parser`。
 
 ## 依赖
 
-- **requests**: HTTP 请求（Python 库）
-- **ffmpeg**: 音频提取（将视频中的音频转为 WAV 格式）
-- **faster-whisper**: 语音转录（Python 库，`pip install faster-whisper`）
-
-## 错误处理
-
-- 如果 cookie 文件不存在，脚本会跳过 cookie 加载，以匿名方式访问（可能受限）
-- 如果 ID 解析成功但元信息获取失败（如视频已删除、需要登录），`id` 和 `source_url` 仍会被填充，其他字段为空，`success` 为 false
-- 如果 ID 解析失败（如短链跳转被 412 拦截、无法从 URL 提取 ID），不会创建任何文件，只打印错误信息
-- 如果平台无法识别，直接抛出异常，不创建任何文件
-- 如果遇到网络异常（连接超时、DNS 解析失败等），脚本会抛出异常并打印错误信息，流程中止
-- 如果视频下载失败（如链接失效、需要登录），元信息仍会保存，但 `transcription` 字段为 null
-- 如果音频提取失败（如 ffmpeg 不可用），`transcription` 字段为 null
-- 如果语音转录失败（如 faster-whisper 模型下载失败），`transcription` 字段为 null，但会打印错误信息
+- 必需：`requests`、`ffmpeg`、`faster-whisper`
+- 建议：`ffprobe`（用于验证下载的媒体文件，通常随 `ffmpeg` 安装）
+- 可选兜底：`yt-dlp`

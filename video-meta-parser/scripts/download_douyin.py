@@ -14,6 +14,8 @@
     - 支持通过 Netscape cookie 文件传入登录态
 """
 
+from __future__ import annotations
+
 import re
 import sys
 import os
@@ -21,6 +23,7 @@ import json
 import argparse
 import shutil
 import subprocess
+import time
 import http.cookiejar
 from datetime import datetime, timezone, timedelta
 import requests
@@ -34,6 +37,9 @@ MOBILE_UA = (
 )
 
 BJ_TZ = timezone(timedelta(hours=8))
+REQUEST_TIMEOUT = (10, 30)
+MAX_DOWNLOAD_BYTES = 4 * 1024 * 1024 * 1024
+DOWNLOAD_DEADLINE_SECONDS = 30 * 60
 
 
 def build_session(cookie_file: str | None = None) -> requests.Session:
@@ -56,7 +62,8 @@ def resolve_video_id(url: str, session: requests.Session) -> str:
         return url
 
     # 短链 / 长链 -> 跟随重定向拿到最终 URL
-    resp = session.get(url, allow_redirects=True)
+    resp = session.get(url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
+    resp.raise_for_status()
     final_url = resp.url
 
     # 从 URL 中提取: /video/7631022935200921779 或 /note/xxx
@@ -85,7 +92,7 @@ def extract_video_info(video_id: str, session: requests.Session) -> dict:
         like_count, comment_count, share_count
     """
     page_url = f"https://www.iesdouyin.com/share/video/{video_id}/"
-    resp = session.get(page_url, allow_redirects=True)
+    resp = session.get(page_url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     html = resp.text
 
@@ -210,18 +217,20 @@ def extract_video_info(video_id: str, session: requests.Session) -> dict:
 
 
 def download_with_ytdlp(url: str, save_path: str,
-                        cookie_file: str | None = None) -> bool:
-    """尝试用 yt-dlp 下载，成功返回 True"""
+                        cookie_file: str | None = None) -> tuple[bool, str]:
+    """尝试用 yt-dlp 下载，并保留失败原因供上层判断是否可重试。"""
     ytdlp = shutil.which('yt-dlp')
     if not ytdlp:
         print("      yt-dlp 未安装，跳过")
-        return False
+        return False, 'yt-dlp 未安装'
 
     cmd = [
         ytdlp,
         '--no-warnings',
         '--no-check-certificates',
         '--force-generic-extractor',
+        '--socket-timeout', '60',
+        '--max-filesize', str(MAX_DOWNLOAD_BYTES),
         '-o', save_path,
     ]
     if cookie_file and os.path.exists(cookie_file):
@@ -231,36 +240,65 @@ def download_with_ytdlp(url: str, save_path: str,
     try:
         result = subprocess.run(cmd, capture_output=True, text=True, timeout=120)
         if result.returncode == 0 and os.path.exists(save_path):
+            if os.path.getsize(save_path) > MAX_DOWNLOAD_BYTES:
+                os.remove(save_path)
+                return False, f'yt-dlp 文件超过大小上限 {MAX_DOWNLOAD_BYTES} 字节'
             size_mb = os.path.getsize(save_path) / 1048576
             print(f"✓ yt-dlp 下载完成: {save_path}  ({size_mb:.1f} MB)")
-            return True
+            return True, ''
         alt = save_path + '.mp4'
-        if os.path.exists(alt):
+        if result.returncode == 0 and os.path.exists(alt):
+            if os.path.getsize(alt) > MAX_DOWNLOAD_BYTES:
+                os.remove(alt)
+                return False, f'yt-dlp 文件超过大小上限 {MAX_DOWNLOAD_BYTES} 字节'
             os.rename(alt, save_path)
             size_mb = os.path.getsize(save_path) / 1048576
             print(f"✓ yt-dlp 下载完成: {save_path}  ({size_mb:.1f} MB)")
-            return True
+            return True, ''
         err = result.stderr.strip().split('\n')[-1] if result.stderr else 'unknown'
         print(f"      yt-dlp 失败: {err}")
+        return False, f'yt-dlp 失败: {err}'
     except subprocess.TimeoutExpired:
         print("      yt-dlp 超时（120s）")
+        return False, 'yt-dlp 超时（120s）'
     except Exception as e:
         print(f"      yt-dlp 异常: {e}")
-    return False
+        return False, f'yt-dlp 异常: {e}'
 
 
 def download_with_requests(video_url: str, save_path: str,
                            session: requests.Session) -> None:
-    """使用 requests 流式下载（备用方案）"""
+    """使用 requests 流式下载"""
     resp = session.get(video_url, stream=True, timeout=60, allow_redirects=True)
     resp.raise_for_status()
 
+    content_type = resp.headers.get('content-type', '').split(';', 1)[0].lower()
+    if content_type.startswith('text/') or content_type in {
+        'application/json', 'application/xml'
+    }:
+        raise RuntimeError(f'直链返回非视频内容: {content_type}')
+
     total = int(resp.headers.get('content-length', 0))
+    if total > MAX_DOWNLOAD_BYTES:
+        raise RuntimeError(
+            f'直链文件超过大小上限: {total} > {MAX_DOWNLOAD_BYTES} 字节'
+        )
     downloaded = 0
     chunk_size = 1024 * 64
+    started_at = time.monotonic()
 
     with open(save_path, 'wb') as f:
         for chunk in resp.iter_content(chunk_size=chunk_size):
+            if not chunk:
+                continue
+            if time.monotonic() - started_at > DOWNLOAD_DEADLINE_SECONDS:
+                raise TimeoutError(
+                    f'直链下载总时限超过 {DOWNLOAD_DEADLINE_SECONDS} 秒'
+                )
+            if downloaded + len(chunk) > MAX_DOWNLOAD_BYTES:
+                raise RuntimeError(
+                    f'直链文件超过大小上限 {MAX_DOWNLOAD_BYTES} 字节'
+                )
             f.write(chunk)
             downloaded += len(chunk)
             if total:
@@ -270,6 +308,23 @@ def download_with_requests(video_url: str, save_path: str,
                       f'{downloaded/1048576:.1f}/{total/1048576:.1f} MB',
                       end='', flush=True)
 
+    if downloaded == 0:
+        raise RuntimeError('直链返回空文件')
+    if total and downloaded != total:
+        raise RuntimeError(f'下载不完整: 期望 {total} 字节，实际 {downloaded} 字节')
+
+    ffprobe = shutil.which('ffprobe')
+    if ffprobe:
+        probe = subprocess.run(
+            [
+                ffprobe, '-v', 'error', '-select_streams', 'v:0',
+                '-show_entries', 'stream=codec_type', '-of', 'csv=p=0', save_path,
+            ],
+            capture_output=True, text=True, timeout=30,
+        )
+        if probe.returncode != 0 or 'video' not in probe.stdout:
+            raise RuntimeError('下载内容不是可解析的视频')
+
     size_mb = os.path.getsize(save_path) / 1048576
     print(f'\n✓ requests 下载完成: {save_path}  ({size_mb:.1f} MB)')
 
@@ -277,12 +332,24 @@ def download_with_requests(video_url: str, save_path: str,
 def download_video(video_url: str, save_path: str,
                    session: requests.Session,
                    cookie_file: str | None = None) -> None:
-    """优先用 yt-dlp 下载，失败则回退到 requests 流式下载"""
-    print("      尝试 yt-dlp ...")
-    if download_with_ytdlp(video_url, save_path, cookie_file):
+    """优先直连下载 MP4，失败时回退到 yt-dlp"""
+    print("      尝试 requests 直链下载 ...")
+    direct_error = ''
+    try:
+        download_with_requests(video_url, save_path, session)
         return
-    print("      回退 requests 下载 ...")
-    download_with_requests(video_url, save_path, session)
+    except Exception as e:
+        direct_error = str(e)
+        print(f"      requests 直链下载失败: {e}")
+        if os.path.exists(save_path):
+            os.remove(save_path)
+
+    print("      回退 yt-dlp 下载 ...")
+    success, ytdlp_error = download_with_ytdlp(video_url, save_path, cookie_file)
+    if not success:
+        raise RuntimeError(
+            f"requests 直链失败: {direct_error}; {ytdlp_error}"
+        )
 
 
 def print_info(info: dict) -> None:

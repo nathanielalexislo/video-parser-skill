@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-B站视频元信息提取（纯提取，不下载视频）。
-被 video-meta-parser/scripts/meta_parser.py 动态加载。
+B站视频元信息独立提取脚本（不下载视频）。
 """
+
+from __future__ import annotations
 
 import re
 import os
@@ -20,6 +21,7 @@ PC_UA = (
 BJ_TZ = timezone(timedelta(hours=8))
 
 BILIBILI_API_VIEW = "https://api.bilibili.com/x/web-interface/view"
+REQUEST_TIMEOUT = (10, 30)
 
 
 def build_session(cookie_file: str | None = None) -> requests.Session:
@@ -54,7 +56,7 @@ def resolve_bvid(url: str, session: requests.Session) -> str:
         return url
 
     if 'b23.tv' in url:
-        resp = session.get(url, allow_redirects=True)
+        resp = session.get(url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
         if resp.status_code >= 400:
             raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
         url = resp.url
@@ -68,7 +70,9 @@ def resolve_bvid(url: str, session: requests.Session) -> str:
 
 def extract_video_info(bvid: str, session: requests.Session) -> dict:
     """通过 B站 API 提取视频元信息"""
-    resp = session.get(BILIBILI_API_VIEW, params={"bvid": bvid})
+    resp = session.get(
+        BILIBILI_API_VIEW, params={"bvid": bvid}, timeout=REQUEST_TIMEOUT
+    )
     resp.raise_for_status()
     data = resp.json()
 

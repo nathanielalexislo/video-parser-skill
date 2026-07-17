@@ -1,8 +1,9 @@
 #!/usr/bin/env python3
 """
-抖音视频元信息提取（纯提取，不下载视频）。
-被 video-meta-parser/scripts/meta_parser.py 动态加载。
+抖音视频元信息独立提取脚本（不下载视频）。
 """
+
+from __future__ import annotations
 
 import re
 import os
@@ -19,6 +20,7 @@ MOBILE_UA = (
 )
 
 BJ_TZ = timezone(timedelta(hours=8))
+REQUEST_TIMEOUT = (10, 30)
 
 
 def build_session(cookie_file: str | None = None) -> requests.Session:
@@ -49,7 +51,7 @@ def resolve_video_id(url: str, session: requests.Session) -> str:
     if re.fullmatch(r'\d{10,}', url):
         return url
 
-    resp = session.get(url, allow_redirects=True)
+    resp = session.get(url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
     if resp.status_code >= 400:
         raise RuntimeError(f"短链访问失败，状态码: {resp.status_code}")
     final_url = resp.url
@@ -91,7 +93,7 @@ def _deep(obj, key, depth=8):
 def extract_video_info(video_id: str, session: requests.Session) -> dict:
     """通过移动端分享页面提取视频直链及完整元信息"""
     page_url = f"https://www.iesdouyin.com/share/video/{video_id}/"
-    resp = session.get(page_url, allow_redirects=True)
+    resp = session.get(page_url, allow_redirects=True, timeout=REQUEST_TIMEOUT)
     resp.raise_for_status()
     html = resp.text
 
