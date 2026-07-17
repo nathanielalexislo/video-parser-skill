@@ -18,7 +18,15 @@ def get_video_info(video_path: str) -> dict:
         '-show_format', '-show_streams', video_path
     ]
     result = subprocess.run(cmd, capture_output=True, text=True)
-    data = json.loads(result.stdout)
+    
+    # 检查 ffprobe 是否成功
+    if result.returncode != 0:
+        raise RuntimeError(f"ffprobe 失败: {result.stderr}")
+    
+    try:
+        data = json.loads(result.stdout)
+    except json.JSONDecodeError as e:
+        raise RuntimeError(f"ffprobe 输出解析失败: {e}")
 
     fmt = data.get('format', {})
     info = {
@@ -48,7 +56,12 @@ def extract_frames(video_path: str, output_dir: str, interval: int = 2) -> list[
         '-vf', f'fps=1/{interval}',
         '-q:v', '2', pattern
     ]
-    subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    result = subprocess.run(cmd, capture_output=True, text=True, timeout=60)
+    
+    # 检查 ffmpeg 是否成功
+    if result.returncode != 0:
+        print(f"警告: ffmpeg 帧提取失败: {result.stderr}")
+        print("将继续处理，但帧列表可能为空")
 
     frames = sorted([
         os.path.join(output_dir, f)
