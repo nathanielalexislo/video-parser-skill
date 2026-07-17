@@ -81,8 +81,7 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
 - 分批处理：按 `--batch-size` 分批，每批内并发处理
 - 进度显示：实时显示每个 URL 的处理状态（✓ 成功 / ✗ 失败）
 - 错误隔离：单个 URL 失败不影响其他 URL 的处理
-- 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果
-- URL 映射表：生成 `<output-dir>/url_mapping.json` 和 `url_mapping.csv` 记录短链到 source_url 的映射
+- 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果和映射关系
 
 **batch_summary.json 结构：**
 
@@ -112,40 +111,7 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
 }
 ```
 
-**url_mapping.json 结构：**
-
-```json
-{
-  "total": 150,
-  "mappings": [
-    {
-      "short_url": "https://v.douyin.com/xxx",
-      "source_url": "https://www.douyin.com/video/123456",
-      "video_id": "123456",
-      "success": true,
-      "error": null
-    },
-    {
-      "short_url": "https://v.douyin.com/aaa",
-      "source_url": "https://www.douyin.com/video/123456",
-      "video_id": "123456",
-      "success": true,
-      "error": null
-    }
-  ]
-}
-```
-
-**url_mapping.csv 格式：**
-
-```csv
-short_url,source_url,video_id,success,error
-https://v.douyin.com/xxx,https://www.douyin.com/video/123456,123456,True,
-https://v.douyin.com/aaa,https://www.douyin.com/video/123456,123456,True,
-https://v.kuaishou.com/yyy,,,False,视频不存在
-```
-
-**注意：** 多个短链可能映射到同一个 source_url 和 video_id（如上例中的 xxx 和 aaa 都指向同一个视频）。
+**注意：** 多个短链可能映射到同一个 `source_url` 和 `video_id`，`results` 数组中会保留所有原始短链的映射关系。
 
 ### 单 URL 模式的输出
 
@@ -209,6 +175,42 @@ SUCCESS=false
 - 报告 `fail_reason` 中的错误原因
 - 说明未创建任何文件
 - 本次元信息解析流程中止，不做其他尝试
+
+### 批量模式的输出
+
+批量处理完成后，会生成以下文件和目录结构：
+
+```
+<output-dir>/
+├── batch_summary.json          # 汇总报告（含所有 URL 的处理结果和映射关系）
+├── <video_id_1>/
+│   ├── 元信息.json
+│   ├── 视频文件.mp4
+│   └── _analysis/
+│       └── audio.wav
+├── <video_id_2>/
+│   └── ...
+└── <video_id_N>/
+    └── ...
+```
+
+**注意：** 多个短链可能映射到同一个 `video_id`，因此不会重复下载，多个短链会在 `batch_summary.json` 的 `results` 数组中指向同一个目录。
+
+### 批量模式的汇报
+
+批量处理完成后，向用户报告：
+- 总计处理的 URL 数量（去重后）
+- 成功/失败的 URL 数量
+- 汇总报告文件位置（`batch_summary.json`）
+- 如有失败的 URL，列出前几个失败原因（可参考 `batch_summary.json` 中的 `results` 数组）
+- 如需生成内容描述，提示可用 `video-content-parser`，并说明需要对每个成功的 `<id>` 目录分别运行
+
+### 批量模式的错误处理
+
+- 批量模式下，单个 URL 失败不会中断整个批次，其他 URL 会继续处理
+- 失败的 URL 会被记录在 `batch_summary.json` 的 `results` 数组中，包含 `error` 字段
+- 即使部分 URL 失败，成功的 URL 仍会生成完整的输出文件（元信息、视频、音频）
+- 如果所有 URL 都失败，仍会生成 `batch_summary.json`，但不会创建任何视频目录
 
 ## 平台适配说明
 

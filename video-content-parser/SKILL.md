@@ -13,9 +13,14 @@ description: >
 支持抖音、快手、哔哩哔哩三个平台。基于 `video-meta-parser` 已下载的视频和转录结果，
 提取关键帧并生成内容描述。
 
-> 前置：本技能依赖 `video-meta-parser` 先完成元信息解析、视频下载和音频转录。
-> `video-meta-parser` 会在 `<output-dir>/<id>/` 下生成视频文件、音频文件和转录结果。
-> 若用户只提供了原始短链，请先运行 `video-meta-parser`。
+> **前置条件：** 本技能依赖 `video-meta-parser` 的输出。
+> 
+> `video-meta-parser` 会在 `<output-dir>/<id>/` 下生成：
+> - `视频文件.mp4` — 下载的视频
+> - `_analysis/audio.wav` — 提取的音频（可选）
+> - `元信息.json` — 元信息（含 `transcription` 字段）
+> 
+> 若用户只提供了原始短链，请先运行 `video-meta-parser` 完成下载和转录。
 
 ## 工作流程
 
