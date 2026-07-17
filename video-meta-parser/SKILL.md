@@ -77,56 +77,96 @@ python3 <skill-path>/scripts/meta_parser.py --input-file <URL文件路径> \
 - `--hf-endpoint` 指定 Hugging Face endpoint（可选，用于加速模型下载）
 
 **批量处理特性：**
-- **两阶段处理**：
-  - 阶段 1：并发解析所有短链接，获取 `video_id` 和 `source_url`
-  - 阶段 2：基于 `video_id` 去重，只对唯一的视频执行元信息解析、下载和转录
+- **两阶段处理**（两阶段都有并发和分批能力）：
+  - 阶段 1：分批并发解析所有短链接，获取 `video_id` 和 `source_url`
+  - 阶段 2：基于 `video_id` 去重，分批并发处理唯一视频（元信息解析、下载、转录）
 - 自动去重：基于 `video_id` 去重，多个短链指向同一视频时只处理一次
-- 分批处理：按 `--batch-size` 分批，每批内并发处理
-- 进度显示：实时显示每个阶段的处理状态（✓ 成功 / ✗ 失败）
+- 进度显示：实时显示每个批次的处理状态（✓ 成功 / ✗ 失败）
 - 错误隔离：单个 URL 失败不影响其他 URL 的处理
-- 映射记录：`batch_summary.json` 中记录每个视频对应的所有短链
-- 汇总报告：生成 `<output-dir>/batch_summary.json` 包含所有处理结果
+- **3 个产出文件**：
+  1. `mapping.jsonl` — 短链映射关系（JSONL 格式，每行一个映射）
+  2. `batch_summary.json` — video_id 去重后的处理结果
+  3. `progress.json` — 两个阶段的进度统计
 
-**batch_summary.json 结构：**
+**产出文件 1: mapping.jsonl**
+
+JSONL 格式（每行一个 JSON 对象），记录所有短链到 video_id 的映射关系：
+
+```jsonl
+{"short_url": "https://v.douyin.com/xxx", "video_id": "123456", "source_url": "https://www.douyin.com/video/123456", "success": true}
+{"short_url": "https://v.douyin.com/aaa", "video_id": "123456", "source_url": "https://www.douyin.com/video/123456", "success": true}
+{"short_url": "https://v.douyin.com/bbb", "video_id": "123456", "source_url": "https://www.douyin.com/video/123456", "success": true}
+{"short_url": "https://v.kuaishou.com/yyy", "video_id": null, "source_url": null, "success": false, "error": "视频不存在"}
+```
+
+**产出文件 2: batch_summary.json**
+
+video_id 去重后的处理结果（只包含唯一视频，不包含解析失败的短链）：
+
+```json
+[
+  {
+    "url": "https://v.douyin.com/xxx",
+    "video_id": "123456",
+    "source_url": "https://www.douyin.com/video/123456",
+    "success": true,
+    "meta_path": "/path/to/元信息.json",
+    "error": null,
+    "all_urls": [
+      "https://v.douyin.com/xxx",
+      "https://v.douyin.com/aaa",
+      "https://v.douyin.com/bbb"
+    ]
+  },
+  {
+    "url": "https://v.kuaishou.com/zzz",
+    "video_id": "789012",
+    "source_url": "https://www.kuaishou.com/short-video/789012",
+    "success": false,
+    "meta_path": null,
+    "error": "视频已删除",
+    "all_urls": [
+      "https://v.kuaishou.com/zzz"
+    ]
+  }
+]
+```
+
+**产出文件 3: progress.json**
+
+两个阶段的详细进度统计：
 
 ```json
 {
-  "total_urls": 150,
-  "unique_videos": 142,
-  "success": 134,
-  "failed": 8,
-  "results": [
-    {
-      "url": "https://v.douyin.com/xxx",
-      "video_id": "123456",
-      "source_url": "https://www.douyin.com/video/123456",
-      "success": true,
-      "meta_path": "/path/to/元信息.json",
-      "error": null,
-      "all_urls": [
-        "https://v.douyin.com/xxx",
-        "https://v.douyin.com/aaa",
-        "https://v.douyin.com/bbb"
-      ]
-    },
-    {
-      "url": "https://v.kuaishou.com/yyy",
-      "video_id": null,
-      "source_url": null,
-      "success": false,
-      "meta_path": null,
-      "error": "视频不存在",
-      "all_urls": [
-        "https://v.kuaishou.com/yyy"
-      ]
-    }
-  ]
+  "phase1_resolve": {
+    "total": 150,
+    "completed": 150,
+    "success": 148,
+    "failed": 2,
+    "unique_videos": 142
+  },
+  "phase2_process": {
+    "total": 142,
+    "completed": 142,
+    "success": 134,
+    "failed": 8
+  }
 }
 ```
 
+**字段说明：**
+- `phase1_resolve.total` — 去重后的短链总数（输入）
+- `phase1_resolve.success` — 成功解析出 video_id 的短链数
+- `phase1_resolve.failed` — 解析失败的短链数（无法获取 video_id）
+- `phase1_resolve.unique_videos` — 去重后的唯一视频数
+- `phase2_process.total` — 需要处理的唯一视频数（等于 phase1_resolve.unique_videos）
+- `phase2_process.success` — 成功处理的视频数（元信息+下载+转录）
+- `phase2_process.failed` — 处理失败的视频数
+
 **注意：** 
-- `total_urls` 是输入的短链总数，`unique_videos` 是去重后的唯一视频数
-- `all_urls` 字段记录了所有指向该视频的短链（多个短链可能映射到同一个 `video_id`）
+- `mapping.jsonl` 包含所有短链（包括解析失败的）
+- `batch_summary.json` 只包含唯一视频的处理结果（不包含解析失败的短链）
+- `all_urls` 字段记录了所有指向该视频的短链
 - 只有唯一的视频会被下载和处理，避免重复工作
 
 ### 单 URL 模式的输出

@@ -427,59 +427,91 @@ def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir:
                 whisper_model: str, hf_endpoint: str, concurrent: int, batch_size: int) -> dict:
     """分批处理所有 URL（两阶段：先解析去重，再处理唯一视频）
     
+    产出 3 个文件：
+    1. mapping.jsonl - 短链映射关系（JSONL 格式）
+    2. batch_summary.json - video_id 去重后的处理结果
+    3. progress.json - 汇总进度统计
+    
     Returns:
-        dict: 汇总报告 {
-            'total_urls': int,           # 输入的总 URL 数
-            'unique_videos': int,         # 去重后的唯一视频数
-            'success': int,               # 成功处理的视频数
-            'failed': int,                # 失败的视频数
-            'results': list[dict]         # 每个唯一视频的处理结果
-        }
+        dict: 进度统计
     """
+    os.makedirs(output_dir, exist_ok=True)
+    
     # 基于 URL 字符串去重（保持顺序）
     unique_urls = list(dict.fromkeys(urls))
     if len(unique_urls) < len(urls):
         print(f"URL 去重: {len(urls)} -> {len(unique_urls)} 个")
     
-    print(f"\n=== 阶段 1: 解析短链接 (并发 {concurrent}) ===")
+    print(f"\n=== 阶段 1: 解析短链接 (并发 {concurrent}, 分批 {batch_size}) ===")
     
-    # 阶段 1: 并发解析所有短链接获取 video_id
+    # 阶段 1: 分批并发解析所有短链接获取 video_id
     resolve_results = []
-    completed = 0
+    phase1_completed = 0
+    phase1_success = 0
     
-    with ThreadPoolExecutor(max_workers=concurrent) as executor:
-        future_to_url = {
-            executor.submit(resolve_url_only, url, cookies_dir, scripts_dir): url
-            for url in unique_urls
-        }
+    # 分批处理
+    resolve_batches = [unique_urls[i:i+batch_size] for i in range(0, len(unique_urls), batch_size)]
+    total_resolve_batches = len(resolve_batches)
+    
+    for batch_num, batch_urls in enumerate(resolve_batches, 1):
+        print(f"\n--- 解析批次 {batch_num}/{total_resolve_batches} ({len(batch_urls)} 个 URL) ---")
         
-        for future in as_completed(future_to_url):
-            url = future_to_url[future]
-            try:
-                result = future.result()
-                resolve_results.append(result)
-                completed += 1
-                
-                # 打印进度
-                if result['video_id']:
-                    print(f"  [{completed}/{len(unique_urls)}] ✓ {url} -> {result['video_id']}")
-                else:
-                    print(f"  [{completed}/{len(unique_urls)}] ✗ {url} -> 解析失败")
-                    if result['error']:
-                        print(f"         错误: {result['error'][:80]}")
-            except Exception as e:
-                resolve_results.append({
-                    'url': url,
-                    'video_id': None,
-                    'source_url': None,
-                    'platform': None,
-                    'error': f'Unexpected error: {str(e)}'
-                })
-                completed += 1
-                print(f"  [{completed}/{len(unique_urls)}] ✗ {url} -> Unexpected error")
+        batch_results = []
+        batch_completed = 0
+        
+        with ThreadPoolExecutor(max_workers=concurrent) as executor:
+            future_to_url = {
+                executor.submit(resolve_url_only, url, cookies_dir, scripts_dir): url
+                for url in batch_urls
+            }
+            
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    result = future.result()
+                    batch_results.append(result)
+                    batch_completed += 1
+                    phase1_completed += 1
+                    
+                    # 打印进度
+                    if result['video_id']:
+                        phase1_success += 1
+                        print(f"  [{batch_completed}/{len(batch_urls)}] ✓ {url} -> {result['video_id']}")
+                    else:
+                        print(f"  [{batch_completed}/{len(batch_urls)}] ✗ {url} -> 解析失败")
+                        if result['error']:
+                            print(f"         错误: {result['error'][:80]}")
+                except Exception as e:
+                    error_result = {
+                        'url': url,
+                        'video_id': None,
+                        'source_url': None,
+                        'platform': None,
+                        'error': f'Unexpected error: {str(e)}'
+                    }
+                    batch_results.append(error_result)
+                    batch_completed += 1
+                    phase1_completed += 1
+                    print(f"  [{batch_completed}/{len(batch_urls)}] ✗ {url} -> Unexpected error")
+        
+        resolve_results.extend(batch_results)
+    
+    # 保存 mapping.jsonl
+    mapping_path = os.path.join(output_dir, 'mapping.jsonl')
+    with open(mapping_path, 'w', encoding='utf-8') as f:
+        for result in resolve_results:
+            mapping_entry = {
+                'short_url': result['url'],
+                'video_id': result['video_id'],
+                'source_url': result['source_url'],
+                'success': result['video_id'] is not None
+            }
+            if result.get('error'):
+                mapping_entry['error'] = result['error']
+            f.write(json.dumps(mapping_entry, ensure_ascii=False) + '\n')
     
     # 基于 video_id 去重，构建映射关系
-    video_id_to_urls = {}  # video_id -> [urls]
+    video_id_to_urls = {}  # video_id -> {info}
     failed_urls = []        # 解析失败的 URLs
     
     for result in resolve_results:
@@ -496,33 +528,75 @@ def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir:
         else:
             failed_urls.append(result)
     
-    print(f"\n解析完成:")
+    print(f"\n阶段 1 完成:")
+    print(f"  总 URL 数: {len(unique_urls)}")
+    print(f"  解析成功: {phase1_success}")
+    print(f"  解析失败: {len(unique_urls) - phase1_success}")
     print(f"  唯一视频数: {len(video_id_to_urls)}")
-    print(f"  解析失败数: {len(failed_urls)}")
+    print(f"  映射文件: {mapping_path}")
     
-    # 阶段 2: 处理唯一的视频
-    print(f"\n=== 阶段 2: 处理唯一视频 (并发 {concurrent}) ===")
+    # 阶段 2: 分批并发处理唯一的视频
+    print(f"\n=== 阶段 2: 处理唯一视频 (并发 {concurrent}, 分批 {batch_size}) ===")
     
-    # 分批处理
     unique_video_ids = list(video_id_to_urls.keys())
-    batches = [unique_video_ids[i:i+batch_size] for i in range(0, len(unique_video_ids), batch_size)]
-    total_batches = len(batches)
+    process_batches = [unique_video_ids[i:i+batch_size] for i in range(0, len(unique_video_ids), batch_size)]
+    total_process_batches = len(process_batches)
     
+    phase2_completed = 0
+    phase2_success = 0
     all_results = []
-    for batch_num, batch_video_ids in enumerate(batches, 1):
-        print(f"\n--- 批次 {batch_num}/{total_batches} ({len(batch_video_ids)} 个视频) ---")
+    
+    for batch_num, batch_video_ids in enumerate(process_batches, 1):
+        print(f"\n--- 处理批次 {batch_num}/{total_process_batches} ({len(batch_video_ids)} 个视频) ---")
         
         # 为每个 video_id 选择一个代表性的 URL 来处理
         batch_urls = []
         for vid in batch_video_ids:
-            # 选择第一个 URL 作为代表
             representative_url = video_id_to_urls[vid]['urls'][0]
             batch_urls.append(representative_url)
         
         # 并发处理这一批
-        batch_results = process_batch(batch_urls, output_dir, cookies_dir, scripts_dir,
-                                     whisper_model, hf_endpoint, concurrent,
-                                     batch_num, total_batches)
+        batch_results = []
+        batch_completed = 0
+        
+        with ThreadPoolExecutor(max_workers=concurrent) as executor:
+            future_to_url = {
+                executor.submit(process_single_url, url, output_dir, cookies_dir, 
+                              scripts_dir, whisper_model, hf_endpoint): url
+                for url in batch_urls
+            }
+            
+            for future in as_completed(future_to_url):
+                url = future_to_url[future]
+                try:
+                    result = future.result()
+                    batch_results.append(result)
+                    batch_completed += 1
+                    phase2_completed += 1
+                    
+                    # 打印进度
+                    status = "✓" if result['success'] else "✗"
+                    vid = result['video_id'] or 'N/A'
+                    print(f"  [{batch_completed}/{len(batch_urls)}] {status} {url} -> {vid}")
+                    if not result['success'] and result['error']:
+                        print(f"         错误: {result['error'][:80]}")
+                    
+                    if result['success']:
+                        phase2_success += 1
+                        
+                except Exception as e:
+                    error_result = {
+                        'url': url,
+                        'video_id': None,
+                        'source_url': None,
+                        'success': False,
+                        'meta_path': None,
+                        'error': f'Unexpected error: {str(e)}'
+                    }
+                    batch_results.append(error_result)
+                    batch_completed += 1
+                    phase2_completed += 1
+                    print(f"  [{batch_completed}/{len(batch_urls)}] ✗ {url} -> Unexpected error")
         
         # 将映射关系添加到结果中
         for result in batch_results:
@@ -533,45 +607,53 @@ def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir:
         
         all_results.extend(batch_results)
     
-    # 添加解析失败的 URLs 到结果中
-    for failed in failed_urls:
-        all_results.append({
-            'url': failed['url'],
-            'video_id': None,
-            'source_url': None,
-            'success': False,
-            'meta_path': None,
-            'error': failed['error'],
-            'all_urls': [failed['url']]
-        })
+    # 保存 batch_summary.json（只包含去重后的唯一视频结果）
+    summary_path = os.path.join(output_dir, 'batch_summary.json')
+    with open(summary_path, 'w', encoding='utf-8') as f:
+        json.dump(all_results, f, ensure_ascii=False, indent=2)
     
-    # 生成汇总报告
-    success_count = sum(1 for r in all_results if r['success'])
-    failed_count = len(all_results) - success_count
-    
-    summary = {
-        'total_urls': len(urls),
-        'unique_videos': len(video_id_to_urls),
-        'success': success_count,
-        'failed': failed_count,
-        'results': all_results
+    # 保存 progress.json
+    progress = {
+        'phase1_resolve': {
+            'total': len(unique_urls),
+            'completed': phase1_completed,
+            'success': phase1_success,
+            'failed': len(unique_urls) - phase1_success,
+            'unique_videos': len(video_id_to_urls)
+        },
+        'phase2_process': {
+            'total': len(video_id_to_urls),
+            'completed': phase2_completed,
+            'success': phase2_success,
+            'failed': phase2_completed - phase2_success
+        }
     }
     
-    # 保存汇总报告
-    summary_path = os.path.join(output_dir, 'batch_summary.json')
-    os.makedirs(output_dir, exist_ok=True)
-    with open(summary_path, 'w', encoding='utf-8') as f:
-        json.dump(summary, f, ensure_ascii=False, indent=2)
+    progress_path = os.path.join(output_dir, 'progress.json')
+    with open(progress_path, 'w', encoding='utf-8') as f:
+        json.dump(progress, f, ensure_ascii=False, indent=2)
     
     # 打印最终汇总
     print(f"\n=== 批量处理完成 ===")
-    print(f"输入 URL 总数: {summary['total_urls']}")
-    print(f"唯一视频数: {summary['unique_videos']}")
-    print(f"成功处理: {summary['success']}")
-    print(f"失败: {summary['failed']}")
-    print(f"汇总报告: {summary_path}")
+    print(f"\n阶段 1 - 解析短链接:")
+    print(f"  总数: {progress['phase1_resolve']['total']}")
+    print(f"  完成: {progress['phase1_resolve']['completed']}")
+    print(f"  成功: {progress['phase1_resolve']['success']}")
+    print(f"  失败: {progress['phase1_resolve']['failed']}")
+    print(f"  唯一视频: {progress['phase1_resolve']['unique_videos']}")
     
-    return summary
+    print(f"\n阶段 2 - 处理视频:")
+    print(f"  总数: {progress['phase2_process']['total']}")
+    print(f"  完成: {progress['phase2_process']['completed']}")
+    print(f"  成功: {progress['phase2_process']['success']}")
+    print(f"  失败: {progress['phase2_process']['failed']}")
+    
+    print(f"\n产出文件:")
+    print(f"  映射关系: {mapping_path}")
+    print(f"  处理结果: {summary_path}")
+    print(f"  进度统计: {progress_path}")
+    
+    return progress
 
 
 def main():
