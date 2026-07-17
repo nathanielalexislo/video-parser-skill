@@ -366,63 +366,6 @@ def process_single_url(url: str, output_dir: str, cookies_dir: str, scripts_dir:
     return result
 
 
-def process_batch(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir: str,
-                  whisper_model: str, hf_endpoint: str, concurrent: int,
-                  batch_num: int, total_batches: int) -> list[dict]:
-    """并发处理一批 URL
-    
-    Args:
-        urls: URL 列表
-        concurrent: 并发数
-        batch_num: 当前批次号（从 1 开始）
-        total_batches: 总批次数
-        
-    Returns:
-        list[dict]: 每个 URL 的处理结果
-    """
-    print(f"\n=== 处理批次 {batch_num}/{total_batches} ({len(urls)} 个 URL，并发 {concurrent}) ===")
-    
-    results = []
-    completed = 0
-    
-    with ThreadPoolExecutor(max_workers=concurrent) as executor:
-        # 提交所有任务
-        future_to_url = {
-            executor.submit(process_single_url, url, output_dir, cookies_dir, 
-                          scripts_dir, whisper_model, hf_endpoint): url
-            for url in urls
-        }
-        
-        # 等待完成并收集结果
-        for future in as_completed(future_to_url):
-            url = future_to_url[future]
-            try:
-                result = future.result()
-                results.append(result)
-                completed += 1
-                
-                # 打印进度
-                status = "✓" if result['success'] else "✗"
-                vid = result['video_id'] or 'N/A'
-                print(f"  [{completed}/{len(urls)}] {status} {url} -> {vid}")
-                if not result['success'] and result['error']:
-                    print(f"         错误: {result['error'][:80]}")
-                    
-            except Exception as e:
-                # 不应该发生，因为 process_single_url 已经捕获了异常
-                results.append({
-                    'url': url,
-                    'video_id': None,
-                    'success': False,
-                    'meta_path': None,
-                    'error': f'Unexpected error: {str(e)}'
-                })
-                completed += 1
-                print(f"  [{completed}/{len(urls)}] ✗ {url} -> Unexpected error")
-    
-    return results
-
-
 def process_all(urls: list[str], output_dir: str, cookies_dir: str, scripts_dir: str,
                 whisper_model: str, hf_endpoint: str, concurrent: int, batch_size: int) -> dict:
     """分批处理所有 URL（两阶段：先解析去重，再处理唯一视频）
